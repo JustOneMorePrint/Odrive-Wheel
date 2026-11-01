@@ -32,7 +32,8 @@ namespace OdriveWheel.SimHubPlugin
         public string Value  { get; }
         public string Detail { get; }
         public bool   IsOk => Status == ParameterStatus.Ok;
-        /// <summary>The command went out. If it then failed, the board may still have acted on it.</summary>
+        /// <summary>The command went out. If it then failed, the board may still have acted on it.
+        /// If the serial worker does not respond, this is not known, the detail says so.</summary>
         public bool   LineWritten { get; }
     }
 
@@ -182,7 +183,7 @@ namespace OdriveWheel.SimHubPlugin
         {
             return task.Wait(timeoutMs + BlockingMarginMs)
                 ? task.Result
-                : new ParameterResult(ParameterStatus.Unavailable, detail: "the serial worker does not respond");
+                : new ParameterResult(ParameterStatus.Unavailable, detail: "the serial worker does not respond, the command may have gone out");
         }
 
         // ---- Mapping ---------------------------------------------------------

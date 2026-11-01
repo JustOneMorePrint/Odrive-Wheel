@@ -197,6 +197,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 cancel.Cancel();
                 Check.Equal(SerialOutcome.Cancelled, queued.Result.Outcome, "queued command");
                 Check.True(watch.ElapsedMilliseconds < 100, "without waiting for the running command");
+                Check.True(!queued.Result.LineWritten, "the line did not go out");
 
                 running.Wait(1000);
                 Check.Equal(0, rig.Board.CountLine("r vbus_voltage"), "never on the wire");
@@ -216,6 +217,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 cancel.Cancel();
                 Check.Equal(SerialOutcome.Cancelled, running.Result.Outcome, "outcome");
                 Check.True(watch.ElapsedMilliseconds < 200, "the wait should end at once");
+                Check.True(running.Result.LineWritten, "the line did go out");
             }
         }
 

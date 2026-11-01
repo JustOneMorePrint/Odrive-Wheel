@@ -10,7 +10,9 @@ namespace OdriveWheel.SimHubPlugin
     public interface IOdriveSerialService
     {
         /// <summary>Queues one command. Never blocks, and the task always completes.
-        /// Without a connection it completes at once, nothing is replayed later.</summary>
+        /// Without a connection it completes at once, nothing is replayed later.
+        /// Cancelling ends a queued command at once. A running one ends with the worker's next
+        /// check, and its result says how far the line got.</summary>
         Task<SerialResult> SendAsync(SerialRequest request);
 
         /// <summary>Requests IDLE ahead of everything else. Sets a flag and returns,
@@ -44,6 +46,9 @@ namespace OdriveWheel.SimHubPlugin
 
         private sealed class PendingCommand
         {
+            private const int Queued = 0, Taken = 1, CalledOff = 2;
+            private int _phase = Queued;
+
             public PendingCommand(SerialRequest request)
             {
                 Request = request;
@@ -56,6 +61,12 @@ namespace OdriveWheel.SimHubPlugin
             public TaskCompletionSource<SerialResult> Completion { get; }
                 = new TaskCompletionSource<SerialResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             public CancellationTokenRegistration Registration { get; set; }
+
+            // Exactly one of these wins. In the queue nothing has happened yet, so a cancellation
+            // can answer at once. Once the worker has the command, only it knows how far the line
+            // got, so from then on only the worker answers.
+            public bool TryTake() => Interlocked.CompareExchange(ref _phase, Taken, Queued) == Queued;
+            public bool TryCallOff() => Interlocked.CompareExchange(ref _phase, CalledOff, Queued) == Queued;
         }
 
         private readonly ISerialTransport     _transport;
@@ -143,7 +154,7 @@ namespace OdriveWheel.SimHubPlugin
             if (_shutdownRequested)
                 return Finished(SerialOutcome.ShuttingDown, "the plugin is shutting down");
             if (request.Cancellation.IsCancellationRequested)
-                return Finished(SerialOutcome.Cancelled, "cancelled");
+                return Finished(SerialOutcome.Cancelled, "cancelled, not sent");
             if (_stopLatched && OdriveCommandGuard.IsBlockedWhileStopped(request.Line))
                 return Finished(SerialOutcome.BlockedByStop, "blocked by the software stop");
 
@@ -152,24 +163,35 @@ namespace OdriveWheel.SimHubPlugin
                 return Finished(OutcomeFor(state), DetailFor(state));
 
             var pending = new PendingCommand(request);
+
+            // Before the queue: the worker disposes this when it completes the command.
+            if (request.Cancellation.CanBeCanceled)
+                pending.Registration = request.Cancellation.Register(() => CallOff(pending));
+
             lock (_queueLock)
             {
                 if (_queueClosed)
-                    return Finished(SerialOutcome.ShuttingDown, "the plugin is shutting down");
+                    return Refuse(pending, SerialOutcome.ShuttingDown, "the plugin is shutting down");
                 if (_queuedCount >= _options.MaxQueuedCommands)
-                    return Finished(SerialOutcome.QueueFull, "too many commands are waiting");
+                    return Refuse(pending, SerialOutcome.QueueFull, "too many commands are waiting");
                 _queues[(int)request.Priority].Enqueue(pending);
                 _queuedCount++;
             }
 
-            if (request.Cancellation.CanBeCanceled)
-            {
-                pending.Registration = request.Cancellation.Register(() =>
-                    pending.Completion.TrySetResult(new SerialResult(SerialOutcome.Cancelled, detail: "cancelled")));
-            }
-
             _wake.Set();
             return pending.Completion.Task;
+        }
+
+        private static void CallOff(PendingCommand command)
+        {
+            if (command.TryCallOff())
+                command.Completion.TrySetResult(new SerialResult(SerialOutcome.Cancelled, detail: "cancelled, not sent"));
+        }
+
+        private static Task<SerialResult> Refuse(PendingCommand command, SerialOutcome outcome, string detail)
+        {
+            Complete(command, new SerialResult(outcome, detail: detail));
+            return command.Completion.Task;
         }
 
         public StopTicket RequestStop()
@@ -345,13 +367,18 @@ namespace OdriveWheel.SimHubPlugin
             catch (TransportWriteTimeoutException ex)
             {
                 _linePartial = true;
-                MarkAllOutOfSync();
                 Complete(command, new SerialResult(SerialOutcome.Timeout, detail: ex.Message + ", not sent"));
             }
             catch (TransportException ex)
             {
                 Complete(command, new SerialResult(SerialOutcome.TransportError, detail: ex.Message, lineWritten: written));
                 LoseConnection(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                // Nobody else can end a running command. The worker loop handles the error itself.
+                Complete(command, new SerialResult(SerialOutcome.TransportError, detail: ex.Message, lineWritten: written));
+                throw;
             }
         }
 
@@ -809,10 +836,11 @@ namespace OdriveWheel.SimHubPlugin
             {
                 foreach (var queue in _queues)
                 {
-                    if (queue.Count > 0)
+                    while (queue.Count > 0)
                     {
                         _queuedCount--;
-                        return queue.Dequeue();
+                        var command = queue.Dequeue();
+                        if (command.TryTake()) return command;   // otherwise it is already answered
                     }
                 }
             }

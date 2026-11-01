@@ -238,6 +238,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                     Check.True(Wait.Until(() => rig.Board.CountLine("r vbus_voltage") == 2), "the command should go out");
                     cancel.Cancel();
                     Check.Equal(ParameterStatus.Cancelled, read.Result.Status, "cancelled read");
+                    Check.True(read.Result.LineWritten, "it had gone out");
                 }
                 rig.Board.Mute = false;
             }
@@ -861,6 +862,21 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        public static void Test_stop_read_back_needs_the_echo_of_the_odrive_channel()
+        {
+            using (var rig = new Rig())
+            {
+                // The OpenFFBoard channel answers, but that says nothing about ODrive replies.
+                rig.Board.MuteOdriveChannel = true;
+                var ticket = rig.Service.RequestStop();
+
+                Check.True(ticket.WaitForResult(3000), "the stop should finish");
+                Check.Equal(StopState.Unconfirmed, ticket.State, "nothing proves IDLE");
+                Check.Equal(0, rig.Board.CountLine("r axis0.current_state"), "no read-back without sync");
+                Check.Equal(0, rig.Board.WireLines.Count(IsOffbSync), "and no OpenFFBoard sync for it");
+            }
+        }
+
         public static void Test_offb_sync_line_is_read_only_in_the_firmware_syntax()
         {
             // The class doesn't exist, so parse_one runs no handler. tests/host/test_cmdparser_sync.cpp
@@ -876,6 +892,308 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.True(!OdriveProtocol.TryParseOffbSyncEcho("[odwsync.m?|NOT_FOUND]", out _), "without a number");
             Check.True(!OdriveProtocol.TryParseOffbSyncEcho("invalid motor 1000001", out _), "nor the ODrive echo");
             Check.True(!OdriveProtocol.TryParseSyncEcho("[odwsync.m1000001?|NOT_FOUND]", out _), "and the other way round");
+        }
+    }
+
+    /// <summary>
+    /// A command in the queue can simply be dropped. Once the worker has it, only the worker
+    /// knows how far the line got, and a cancellation must not take that away.
+    /// </summary>
+    public static class CancelStateTests
+    {
+        private const string Path = "axis0.motor.config.current_lim";
+        private const string Line = "w " + Path + " 99";
+
+        public static void Test_cancelling_after_the_write_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                // The worker reads right after the write.
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+                Check.True(hold.Reached.Wait(3000), "the worker should wait for a reply");
+                Check.Equal(1, rig.Board.CountLine(Line), "the line is on the wire");
+
+                cancel.Cancel();
+                hold.Go.Set();
+
+                Check.Equal(ParameterStatus.Cancelled, write.Result.Status, "status");
+                Check.True(write.Result.LineWritten, "the result says it was sent");
+                Check.True(write.Result.Detail.Contains("already sent"), "says so: " + write.Result.Detail);
+                Check.Equal("99", rig.Board.Value(Path), "and the board did get it");
+            }
+        }
+
+        public static void Test_every_cancel_after_the_recorded_write_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            {
+                for (int i = 1; i <= 10; i++)
+                {
+                    using (var cancel = new CancellationTokenSource())
+                    {
+                        var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+                        Check.True(Wait.Until(() => rig.Board.CountLine(Line) == i), "the line should go out");
+                        cancel.Cancel();
+                        Check.True(write.Result.LineWritten, "run " + i + ": " + write.Result.Status + ", " + write.Result.Detail);
+                    }
+                }
+            }
+        }
+
+        public static void Test_cancelling_a_running_read_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                rig.Board.Mute = true;
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var read = rig.Send("r vbus_voltage", cancellation: cancel.Token);
+                Check.True(hold.Reached.Wait(3000), "the worker should wait for a reply");
+
+                cancel.Cancel();
+                hold.Go.Set();
+
+                Check.Equal(SerialOutcome.Cancelled, read.Result.Outcome, "outcome");
+                Check.True(read.Result.LineWritten, "the result says it was sent");
+                Check.True(read.Result.Detail.Contains("already sent"), "says so: " + read.Result.Detail);
+            }
+        }
+
+        public static void Test_cancelling_running_offb_commands_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.Mute = true;
+                using (var cancel = new CancellationTokenSource())
+                {
+                    var read = rig.Parameters.ReadAsync("axis.range", FieldProtocol.Openffb, cancellation: cancel.Token);
+                    Check.True(Wait.Until(() => rig.Board.CountLine("axis.range?") == 1), "the read should go out");
+                    cancel.Cancel();
+                    Check.Equal(ParameterStatus.Cancelled, read.Result.Status, "read");
+                    Check.True(read.Result.LineWritten, "the read was sent");
+                }
+                rig.Board.Mute = false;
+
+                rig.Board.ReplyDelayMs = 100;
+                using (var cancel = new CancellationTokenSource())
+                {
+                    var hold = WorkerHold.AtNextRead(rig.Board);
+                    var exec = rig.Parameters.ExecOffbAsync("sys.save", cancellation: cancel.Token);
+                    Check.True(hold.Reached.Wait(3000), "the worker should sync first");
+                    hold.Go.Set();
+                    Check.True(Wait.Until(() => rig.Board.CountLine("sys.save!") == 1), "the exec should go out");
+                    cancel.Cancel();
+                    Check.Equal(ParameterStatus.Cancelled, exec.Result.Status, "exec");
+                    Check.True(exec.Result.LineWritten, "the exec was sent");
+                }
+            }
+        }
+
+        public static void Test_timeout_passes_the_sent_state_on()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.Mute = true;
+                foreach (var protocol in new[] { FieldProtocol.Odrive, FieldProtocol.Openffb })
+                {
+                    var read = rig.Parameters.ReadAsync("vbus_voltage", protocol).Result;
+                    Check.Equal(ParameterStatus.Timeout, read.Status, "status");
+                    Check.True(read.LineWritten, "the line did go out");
+                }
+            }
+        }
+
+        public static void Test_blocking_write_passes_the_sent_state_on()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var write = Task.Run(() => rig.Parameters.Write(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token));
+                Check.True(hold.Reached.Wait(3000), "the worker should wait for a reply");
+
+                cancel.Cancel();
+                hold.Go.Set();
+
+                Check.Equal(ParameterStatus.Cancelled, write.Result.Status, "status");
+                Check.True(write.Result.LineWritten, "the result says it was sent");
+            }
+        }
+
+        public static void Test_cancelling_a_queued_command_says_not_sent_at_once()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var running = rig.Send("r axis0.error");
+                Check.True(hold.Reached.Wait(3000), "the worker should be busy");
+
+                var queued = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+                cancel.Cancel();
+
+                Check.True(queued.Wait(1000), "at once, although the worker is held");
+                Check.Equal(ParameterStatus.Cancelled, queued.Result.Status, "status");
+                Check.True(!queued.Result.LineWritten, "the result says it was not sent");
+                Check.True(queued.Result.Detail.Contains("not sent"), "says so: " + queued.Result.Detail);
+
+                hold.Go.Set();
+                running.Wait(1000);
+                // Once the next command is through, the worker has passed the cancelled one.
+                Check.Equal("48.000", rig.Send("r vbus_voltage").Result.Reply, "next command");
+                Check.Equal(0, rig.Board.CountLine(Line), "must not go out");
+            }
+        }
+
+        public static void Test_already_cancelled_token_says_not_sent()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                cancel.Cancel();
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token).Result;
+
+                Check.Equal(ParameterStatus.Cancelled, write.Status, "status");
+                Check.True(!write.LineWritten, "the result says it was not sent");
+                Check.True(write.Detail.Contains("not sent"), "says so: " + write.Detail);
+                Check.Equal(0, rig.Board.CountLine(Line), "must not go out");
+            }
+        }
+
+        public static void Test_cancelling_right_before_the_last_check_keeps_the_line_off_the_wire()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                rig.Board.OnNextDiscard(cancel.Cancel);
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+
+                Check.Equal(ParameterStatus.Cancelled, write.Result.Status, "status");
+                Check.True(!write.Result.LineWritten, "the result says it was not sent");
+                Check.Equal(0, rig.Board.CountLine(Line), "must not go out");
+            }
+        }
+
+        public static void Test_cancelling_right_after_the_last_check_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                // Too late to hold the line back, but the result has to say so.
+                rig.Board.OnNextWrite(cancel.Cancel);
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+
+                Check.Equal(ParameterStatus.Cancelled, write.Result.Status, "status");
+                Check.True(write.Result.LineWritten, "the result says it was sent");
+                Check.Equal(1, rig.Board.CountLine(Line), "it did go out");
+            }
+        }
+
+        public static void Test_cancelled_write_that_stalls_reports_not_sent()
+        {
+            using (var rig = new Rig(o => o.WriteTimeoutMs = 40))
+            using (var cancel = new CancellationTokenSource())
+            {
+                rig.Board.StallWrites();
+                rig.Board.OnNextWrite(cancel.Cancel);
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+
+                Check.True(!write.Result.LineWritten, "the result says it was not sent");
+                Check.True(write.Result.Detail.Contains("not sent"), "says so: " + write.Result.Detail);
+                Check.Equal(0, rig.Board.CountLine(Line), "it did not go out");
+            }
+        }
+
+        public static void Test_cancelled_write_that_loses_the_link_reports_the_line_as_sent()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var write = rig.Parameters.WriteAsync(Path, "99", FieldProtocol.Odrive, cancellation: cancel.Token);
+                Check.True(hold.Reached.Wait(3000), "the worker should wait for a reply");
+
+                rig.Board.FailNextRead = true;
+                cancel.Cancel();
+                hold.Go.Set();
+
+                Check.True(write.Result.LineWritten, "the result says it was sent: " + write.Result.Status);
+            }
+        }
+
+        public static void Test_cancelling_after_the_result_changes_nothing()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var read = rig.Parameters.ReadAsync("vbus_voltage", FieldProtocol.Odrive, cancellation: cancel.Token);
+                Check.Equal("48.000", read.Result.Value, "the read is through");
+
+                cancel.Cancel();
+
+                Check.Equal(ParameterStatus.Ok, read.Result.Status, "status");
+                Check.Equal("48.000", rig.Parameters.Read("vbus_voltage", FieldProtocol.Odrive).Value, "the next read needs no sync");
+                Check.Equal(0, rig.Board.WireLines.Count(l => l.StartsWith("f ", StringComparison.Ordinal)), "no sync line");
+            }
+        }
+
+        // Whenever the cancel hits: the result says what happened on the wire.
+        public static void Test_the_sent_state_matches_the_wire_whenever_the_cancel_comes()
+        {
+            using (var rig = new Rig())
+            {
+                var random = new Random(4711);
+                for (int i = 0; i < 150; i++)
+                {
+                    string line = "w " + Path + " " + i;
+                    int spins = random.Next(0, 60000);
+                    using (var cancel = new CancellationTokenSource())
+                    {
+                        var canceller = Task.Run(() =>
+                        {
+                            Thread.SpinWait(spins);
+                            cancel.Cancel();
+                        });
+                        var result = rig.Send(line, ReplyMode.SilenceIsOk, 5, cancellation: cancel.Token).Result;
+                        canceller.Wait();
+                        Check.Equal(rig.Board.CountLine(line) == 1, result.LineWritten,
+                                    "run " + i + ": " + result.Outcome + ", " + result.Detail);
+                    }
+                }
+            }
+        }
+
+        public static void Test_unexpected_error_in_the_worker_still_ends_the_running_command()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.OnNextRead(() => throw new InvalidOperationException("driver bug"));
+                var read = rig.Send("r vbus_voltage");
+
+                Check.True(read.Wait(3000), "only the worker ends a running command, so it must not forget it");
+                if (read.IsCompleted)
+                {
+                    Check.Equal(SerialOutcome.TransportError, read.Result.Outcome, "outcome");
+                    Check.True(read.Result.LineWritten, "the line did go out");
+                }
+                Check.True(Wait.Until(() => rig.Service.GetStatus().ConnectGeneration == 2), "should reconnect");
+            }
+        }
+
+        public static void Test_stuck_worker_does_not_claim_the_line_stayed_off_the_wire()
+        {
+            using (var rig = new Rig())
+            {
+                var hold = WorkerHold.AtNextRead(rig.Board);
+                var write = Task.Run(() => rig.Parameters.Write(Path, "99", FieldProtocol.Odrive));
+                Check.True(hold.Reached.Wait(3000), "the worker should be stuck");
+
+                Check.Equal(ParameterStatus.Unavailable, write.Result.Status, "the blocking call gives up");
+                Check.True(write.Result.Detail.Contains("may have gone out"), "and says what it can't know: " + write.Result.Detail);
+                hold.Go.Set();
+            }
         }
     }
 }

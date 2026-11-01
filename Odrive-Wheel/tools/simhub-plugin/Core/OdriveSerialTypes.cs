@@ -100,7 +100,8 @@ namespace OdriveWheel.SimHubPlugin
         public SerialOutcome Outcome     { get; }
         public string        Reply       { get; }
         public string        Detail      { get; }
-        /// <summary>True once the whole line went out, even if the link failed afterwards.</summary>
+        /// <summary>True once the whole line went out, even if the command was cancelled or the
+        /// link failed afterwards. The board may have acted on it then.</summary>
         public bool          LineWritten { get; }
     }
 
