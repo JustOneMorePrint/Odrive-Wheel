@@ -97,8 +97,9 @@ namespace OdriveWheel.SimHubPlugin
 
         // Worker thread only.
         private bool _transportOpen;
-        private bool _needDrain;
+        private bool _resyncNeeded;
         private bool _linePartial;
+        private uint _nextSyncMarker = 1000000;
         private long _nextConnectTicks;
 
         public OdriveSerialService(ISerialTransport transport, IPortLocator locator,
@@ -278,6 +279,7 @@ namespace OdriveWheel.SimHubPlugin
             if (_wantReleased)
             {
                 CloseTransport();
+                _resyncNeeded = true;   // another application may use the port meanwhile
                 _state = SerialConnectionState.Released;
                 FailAllQueued(SerialOutcome.PortReleased, DetailFor(SerialConnectionState.Released));
                 _wake.WaitOne(_options.IdleWaitMs);
@@ -313,40 +315,37 @@ namespace OdriveWheel.SimHubPlugin
 
         private void Execute(PendingCommand command)
         {
-            if (command.Completion.Task.IsCompleted) return;   // cancelled while queued
-
             var request = command.Request;
-            if (request.Cancellation.IsCancellationRequested)
-            {
-                Complete(command, new SerialResult(SerialOutcome.Cancelled, detail: "cancelled"));
-                return;
-            }
-            if (ElapsedMs(command.EnqueuedTicks) > _options.MaxQueueWaitMs)
-            {
-                Complete(command, new SerialResult(SerialOutcome.Timeout, detail: "expired in the queue"));
-                return;
-            }
-            if (_stopLatched && OdriveCommandGuard.IsBlockedWhileStopped(request.Line))
-            {
-                Complete(command, new SerialResult(SerialOutcome.BlockedByStop, detail: "blocked by the software stop"));
-                return;
-            }
-
             bool written = false;
             try
             {
-                PrepareLine();
+                var refusal = RefusalBeforeSending(command) ?? PrepareLine(request);
+                if (refusal != null)
+                {
+                    Complete(command, refusal);
+                    return;
+                }
+
                 // A late reply or a diagnostic line must not pass as this command's reply.
                 _transport.DiscardInput();
+
+                // Preparing takes time, and until now nothing is lost by saying no.
+                refusal = RefusalBeforeSending(command);
+                if (refusal != null)
+                {
+                    Complete(command, refusal);
+                    return;
+                }
+
                 _transport.WriteLine(request.Line, _options.WriteTimeoutMs);
                 written = true;
                 Complete(command, AwaitReply(request));
             }
             catch (TransportWriteTimeoutException ex)
             {
-                _linePartial = true;
-                _needDrain   = true;
-                Complete(command, new SerialResult(SerialOutcome.Timeout, detail: ex.Message));
+                _linePartial  = true;
+                _resyncNeeded = true;
+                Complete(command, new SerialResult(SerialOutcome.Timeout, detail: ex.Message + ", not sent"));
             }
             catch (TransportException ex)
             {
@@ -355,20 +354,106 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
-        // After a write timeout part of a line may sit in the board's buffer. An empty
-        // line ends it; the firmware answers that with "unknown command", hence the drain.
-        private void PrepareLine()
+        // Why a command must not go out any more, null if it may.
+        private SerialResult RefusalBeforeSending(PendingCommand command)
+        {
+            var request = command.Request;
+            var abort = AbortReason(request.Cancellation, lineWritten: false);
+            if (abort != null) return abort;
+            if (ElapsedMs(command.EnqueuedTicks) > _options.MaxQueueWaitMs)
+                return new SerialResult(SerialOutcome.Timeout, detail: "expired in the queue");
+            if (_stopLatched && OdriveCommandGuard.IsBlockedWhileStopped(request.Line))
+                return new SerialResult(SerialOutcome.BlockedByStop, detail: "blocked by the software stop");
+            return null;
+        }
+
+        private SerialResult AbortReason(CancellationToken cancellation, bool lineWritten)
+        {
+            string sent = lineWritten ? ", the line was already sent" : ", not sent";
+            if (_shutdownRequested)
+                return new SerialResult(SerialOutcome.ShuttingDown, detail: "the plugin is shutting down" + sent, lineWritten: lineWritten);
+            if (Volatile.Read(ref _activeStop) != null)
+                return new SerialResult(SerialOutcome.Cancelled, detail: "software stop" + sent, lineWritten: lineWritten);
+            if (_wantReleased)
+                return new SerialResult(SerialOutcome.PortReleased, detail: DetailFor(SerialConnectionState.Released) + sent, lineWritten: lineWritten);
+            if (cancellation.IsCancellationRequested)
+                return new SerialResult(SerialOutcome.Cancelled, detail: "cancelled" + sent, lineWritten: lineWritten);
+            return null;
+        }
+
+        // Returns null once the command may go out, otherwise why it may not.
+        //
+        // After a write timeout part of a line may sit in the board's buffer. An empty line
+        // ends it; the firmware answers that with "unknown command", so the stream needs a
+        // resync afterwards.
+        private SerialResult PrepareLine(SerialRequest request)
         {
             if (_linePartial)
             {
                 _transport.WriteLine(string.Empty, _options.WriteTimeoutMs);
-                _linePartial = false;
-                _needDrain   = true;
+                _linePartial  = false;
+                _resyncNeeded = true;
             }
-            if (_needDrain)
+            if (!_resyncNeeded) return null;
+
+            // An OpenFFBoard reply carries its echo and takes a direct path in the firmware.
+            // These commands don't depend on the sync, so a silent ODrive channel, for
+            // example a stuck sink, must not take them with it.
+            bool hasEcho = request.Mode == ReplyMode.OffbEcho;
+            var refusal = Resync(hasEcho ? _options.ResyncEchoedTimeoutMs : _options.ResyncTimeoutMs,
+                                 () => AbortReason(request.Cancellation, lineWritten: false));
+            if (hasEcho && refusal != null && refusal.Outcome == SerialOutcome.Timeout)
             {
-                Drain(_options.DrainMs, abortOnStop: true);
-                _needDrain = false;
+                _log("the reply stream is out of sync, sending " + request.Line + " anyway: its reply carries an echo");
+                return null;
+            }
+            return refusal;
+        }
+
+        // ODrive replies carry no echo, and after a timeout or an abort one can still arrive at
+        // any time. Waiting proves nothing, so this asks: everything older than the echo of a
+        // sync line has passed, the firmware answers in order. Lines before it are late replies.
+        // The line can get lost, so it is repeated. Echoes of repeats that arrive later are
+        // recognisable and never taken for a reply.
+        private SerialResult Resync(int timeoutMs, Func<SerialResult> abortReason)
+        {
+            long start = Stopwatch.GetTimestamp();
+            long lastSent = 0;
+            uint firstMarker = _nextSyncMarker;
+
+            while (true)
+            {
+                var abort = abortReason();
+                if (abort != null) return abort;
+
+                long remaining = timeoutMs - ElapsedMs(start);
+                if (remaining <= 0)
+                    return new SerialResult(SerialOutcome.Timeout, detail: "the reply stream is out of sync, not sent");
+
+                if (lastSent == 0 || ElapsedMs(lastSent) >= _options.ResyncRetryMs)
+                {
+                    _transport.WriteLine(OdriveProtocol.SyncRequest(_nextSyncMarker), _options.WriteTimeoutMs);
+                    _nextSyncMarker++;
+                    lastSent = Stopwatch.GetTimestamp();
+                }
+
+                var line = _transport.ReadLine((int)Math.Min(_options.ReadSliceMs, remaining));
+                if (line == null) continue;
+                line = line.TrimEnd('\r', '\n');
+                if (line.Length == 0) continue;
+
+                if (OdriveProtocol.TryParseSyncEcho(line, out uint marker))
+                {
+                    if (marker >= firstMarker && marker < _nextSyncMarker)
+                    {
+                        _resyncNeeded = false;
+                        return null;
+                    }
+                }
+                else
+                {
+                    _log("discarded late reply: " + line);
+                }
             }
         }
 
@@ -379,33 +464,20 @@ namespace OdriveWheel.SimHubPlugin
 
             while (true)
             {
-                if (_shutdownRequested)
+                var abort = AbortReason(request.Cancellation, lineWritten: true);
+                if (abort != null)
                 {
-                    _needDrain = true;
-                    return new SerialResult(SerialOutcome.ShuttingDown, detail: "the plugin is shutting down", lineWritten: true);
-                }
-                if (Volatile.Read(ref _activeStop) != null)
-                {
-                    _needDrain = true;
-                    return new SerialResult(SerialOutcome.Cancelled, detail: "software stop", lineWritten: true);
-                }
-                if (_wantReleased)
-                {
-                    _needDrain = true;
-                    return new SerialResult(SerialOutcome.PortReleased, detail: DetailFor(SerialConnectionState.Released), lineWritten: true);
-                }
-                if (request.Cancellation.IsCancellationRequested)
-                {
-                    _needDrain = true;
-                    return new SerialResult(SerialOutcome.Cancelled, detail: "cancelled", lineWritten: true);
+                    _resyncNeeded = true;
+                    return abort;
                 }
 
                 long remaining = request.TimeoutMs - ElapsedMs(start);
                 if (remaining <= 0)
                 {
+                    // In both cases a reply can still be on its way.
+                    _resyncNeeded = true;
                     if (request.Mode == ReplyMode.SilenceIsOk)
                         return new SerialResult(SerialOutcome.Silence, lineWritten: true);
-                    _needDrain = true;
                     return new SerialResult(SerialOutcome.Timeout, detail: "no reply", lineWritten: true);
                 }
 
@@ -437,7 +509,7 @@ namespace OdriveWheel.SimHubPlugin
                         break;
 
                     default:
-                        if (line.StartsWith("[", StringComparison.Ordinal))
+                        if (line.StartsWith("[", StringComparison.Ordinal) || OdriveProtocol.IsSyncEcho(line))
                             _log("discarded stale reply: " + line);
                         else
                             return new SerialResult(SerialOutcome.Reply, line, lineWritten: true);
@@ -446,12 +518,11 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
-        private void Drain(int durationMs, bool abortOnStop)
+        private void DiscardFor(int durationMs)
         {
             long start = Stopwatch.GetTimestamp();
             while (true)
             {
-                if (abortOnStop && Volatile.Read(ref _activeStop) != null) return;
                 long remaining = durationMs - ElapsedMs(start);
                 if (remaining <= 0) return;
                 var line = _transport.ReadLine((int)Math.Min(_options.ReadSliceMs, remaining));
@@ -467,7 +538,7 @@ namespace OdriveWheel.SimHubPlugin
             var oldCts = _stopCts;
             _stopCts = new CancellationTokenSource();
             oldCts.Cancel();
-            FailAllQueued(SerialOutcome.Cancelled, "software stop");
+            FailAllQueued(SerialOutcome.Cancelled, "software stop, not sent");
 
             bool closeAfterwards = false;
             if (!_transportOpen)
@@ -488,7 +559,6 @@ namespace OdriveWheel.SimHubPlugin
             }
             finally
             {
-                _needDrain = true;
                 if (closeAfterwards) CloseTransport();
             }
         }
@@ -502,12 +572,14 @@ namespace OdriveWheel.SimHubPlugin
                 try
                 {
                     // The leading line end finishes whatever an aborted write left behind.
+                    // It gets an answer, so the stream needs a resync before the next command.
+                    _resyncNeeded = true;
                     _transport.WriteLine("\n" + StopLineAxis0, _options.WriteTimeoutMs);
                     _linePartial = false;
                     ticket.MarkWritten();
                     _transport.WriteLine(StopLineAxis1, _options.WriteTimeoutMs);
 
-                    Drain(_options.DrainMs, abortOnStop: false);
+                    DiscardFor(_options.StopSettleMs);
 
                     if (ReportsIdleOverHid()) return (StopState.Confirmed, "HID reports IDLE");
                     if (ReadsIdleOverSerial()) return (StopState.Confirmed, "serial read-back reports IDLE");
@@ -534,16 +606,25 @@ namespace OdriveWheel.SimHubPlugin
             catch (Exception ex) { _log("HID axis state: " + ex.Message); return false; }
         }
 
-        // Two matching replies in a row: a single "1" could still be the late
-        // reply of a command the stop has just aborted.
+        // A late reply of a command the stop has just aborted must not pass for the state, so
+        // this reads only once the stream is in sync. Two matching replies in a row on top: a
+        // wrong confirmation is worse than a missing one.
         private bool ReadsIdleOverSerial()
         {
+            var unsynced = Resync(_options.StopReadbackMs, () =>
+                _shutdownRequested ? new SerialResult(SerialOutcome.ShuttingDown) : null);
+            if (unsynced != null) return false;
+
             for (int i = 0; i < 2; i++)
             {
                 _transport.DiscardInput();
                 _transport.WriteLine(StateReadLine, _options.WriteTimeoutMs);
                 var reply = ReadOneLine(_options.StopReadbackMs);
-                if (reply == null) return false;
+                if (reply == null)
+                {
+                    _resyncNeeded = true;
+                    return false;
+                }
                 if (!int.TryParse(reply.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int state)
                     || state != AxisStateIdle)
                     return false;
@@ -560,14 +641,14 @@ namespace OdriveWheel.SimHubPlugin
                 if (remaining <= 0) return null;
                 var line = _transport.ReadLine((int)Math.Min(_options.ReadSliceMs, remaining));
                 if (string.IsNullOrEmpty(line)) continue;
-                if (line.StartsWith("[", StringComparison.Ordinal)) continue;
+                if (line.StartsWith("[", StringComparison.Ordinal) || OdriveProtocol.IsSyncEcho(line)) continue;
                 return line;
             }
         }
 
         private void FinishStop(StopTicket ticket, StopState state, string detail)
         {
-            ticket.Finish(state, detail);
+            ticket.Finish(state, detail, Volatile.Read(ref _generation));
             Interlocked.CompareExchange(ref _activeStop, null, ticket);
             _log("software stop: " + state + " (" + detail + "), written after " + ticket.WrittenAfterMs + " ms");
         }
@@ -639,8 +720,6 @@ namespace OdriveWheel.SimHubPlugin
             }
 
             _transportOpen = true;
-            _needDrain     = false;
-            _linePartial   = false;
             _openPort      = port;
             _lastError     = null;
             Volatile.Write(ref _portMisses, 0);
@@ -666,9 +745,9 @@ namespace OdriveWheel.SimHubPlugin
         {
             bool wasOpen = _transportOpen;
             CloseTransport();
-            _needDrain   = false;
-            _linePartial = false;
-            _lastError   = reason;
+            // The board may have kept running, with a reply or part of a line pending.
+            _resyncNeeded = true;
+            _lastError    = reason;
             if (wasOpen) _log("connection lost: " + reason);
             if (!_wantReleased) _state = SerialConnectionState.Searching;
             ScheduleReconnect();

@@ -138,8 +138,13 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.True(rig.Parameters.SaveOdrive().IsOk, "normal");
 
                 // The board reboots right after saving, the link may die during the wait.
-                rig.Board.FailNextRead = true;
+                rig.Board.ReplyOverride = line =>
+                {
+                    if (line == "ss") rig.Board.FailNextRead = true;
+                    return null;
+                };
                 Check.True(rig.Parameters.SaveOdrive().IsOk, "link dies afterwards");
+                rig.Board.ReplyOverride = null;
                 Check.True(Wait.Until(() => rig.Service.GetStatus().IsConnected), "reconnects");
 
                 rig.Board.FailNextWrite = true;

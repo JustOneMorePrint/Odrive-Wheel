@@ -99,7 +99,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public static void Test_late_reply_after_a_timeout_does_not_reach_the_next_command()
         {
-            using (var rig = new Rig(o => o.DrainMs = 60))
+            using (var rig = new Rig())
             {
                 rig.Board.ReplyDelayMs = 115;
                 var first = rig.Send("r axis0.error", timeoutMs: 100);
@@ -420,7 +420,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public static void Test_write_timeout_keeps_the_connection_and_ends_the_partial_line()
         {
-            using (var rig = new Rig(o => { o.WriteTimeoutMs = 40; o.DrainMs = 40; }))
+            using (var rig = new Rig(o => o.WriteTimeoutMs = 40))
             {
                 rig.Board.StallWrites();
                 var stalled = rig.Send("r axis0.error");

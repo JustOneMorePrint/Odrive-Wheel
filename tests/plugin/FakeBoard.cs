@@ -15,7 +15,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
     {
         private readonly object _lock = new object();
         private readonly List<string> _lines = new List<string>();
+        private readonly List<string> _wire = new List<string>();
         private readonly List<(long dueMs, string line)> _replies = new List<(long, string)>();
+        private long _lastReplyDueMs;
+        private Action _beforeNextRead;
+        private Action _beforeNextWrite;
+        private Action _beforeNextDiscard;
         private readonly Dictionary<string, string> _values = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private readonly ManualResetEventSlim _writeGate = new ManualResetEventSlim(true);
@@ -49,6 +54,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public volatile bool RefuseOpenAsBusy;
         public volatile bool FailOpen;
         public volatile bool Mute;
+        /// <summary>Only the ODrive channel stays silent, like a stuck sink in the firmware.</summary>
+        public volatile bool MuteOdriveChannel;
         public volatile bool IgnoreStop;
         public volatile int  ReplyDelayMs;
         public volatile bool FailNextRead;
@@ -92,14 +99,31 @@ namespace OdriveWheel.SimHubPlugin.Tests
             _replies.Insert(at, (dueMs, line));
         }
 
+        /// <summary>Runs once on the worker thread, at the start of its next read or write.
+        /// Lets a test hold the worker at an exact point and act meanwhile.</summary>
+        public void OnNextRead(Action action) => Volatile.Write(ref _beforeNextRead, action);
+        public void OnNextWrite(Action action) => Volatile.Write(ref _beforeNextWrite, action);
+        public void OnNextDiscard(Action action) => Volatile.Write(ref _beforeNextDiscard, action);
+
+        /// <summary>The commands the board received, without the sync lines.</summary>
         public string[] Lines
         {
             get { lock (_lock) return _lines.ToArray(); }
         }
 
+        /// <summary>Everything the board received, sync lines included.</summary>
+        public string[] WireLines
+        {
+            get { lock (_lock) return _wire.ToArray(); }
+        }
+
         public void ClearLines()
         {
-            lock (_lock) _lines.Clear();
+            lock (_lock)
+            {
+                _lines.Clear();
+                _wire.Clear();
+            }
         }
 
         public int CountLine(string line) => Lines.Count(l => l == line);
@@ -135,6 +159,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public void WriteLine(string line, int timeoutMs)
         {
+            Interlocked.Exchange(ref _beforeNextWrite, null)?.Invoke();
             if (!_writeGate.Wait(timeoutMs))
                 throw new TransportWriteTimeoutException("write timed out");
             if (FailNextWrite)
@@ -154,6 +179,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public string ReadLine(int timeoutMs)
         {
+            Interlocked.Exchange(ref _beforeNextRead, null)?.Invoke();
             lock (_lock)
             {
                 long deadline = _clock.ElapsedMilliseconds + timeoutMs;
@@ -184,6 +210,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public void DiscardInput()
         {
+            Interlocked.Exchange(ref _beforeNextDiscard, null)?.Invoke();
             Interlocked.Increment(ref DiscardCount);
             lock (_lock)
             {
@@ -201,6 +228,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             lock (_lock)
             {
                 _replies.Clear();
+                _lastReplyDueMs = 0;
                 Monitor.PulseAll(_lock);
             }
         }
@@ -218,6 +246,14 @@ namespace OdriveWheel.SimHubPlugin.Tests
             if (line.Length == 0)
             {
                 Reply("unknown command");   // process_line with an empty buffer
+                return;
+            }
+            _wire.Add(line);
+
+            // cmd_get_feedback with a number above AXIS_COUNT, the sync line of the service.
+            if (line.StartsWith("f ", StringComparison.Ordinal))
+            {
+                Reply("invalid motor " + line.Substring(2));
                 return;
             }
             _lines.Add(line);
@@ -303,7 +339,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private void Reply(string text)
         {
             if (Mute) return;
-            AddReply(_clock.ElapsedMilliseconds + ReplyDelayMs, text);
+            if (MuteOdriveChannel && !text.StartsWith("[", StringComparison.Ordinal)) return;
+            // The firmware answers in order, however long each answer takes.
+            _lastReplyDueMs = Math.Max(_clock.ElapsedMilliseconds + ReplyDelayMs, _lastReplyDueMs);
+            AddReply(_lastReplyDueMs, text);
         }
     }
 

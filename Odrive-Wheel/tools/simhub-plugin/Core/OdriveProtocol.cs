@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace OdriveWheel.SimHubPlugin
@@ -45,6 +46,22 @@ namespace OdriveWheel.SimHubPlugin
             var match = Regex.Match(reply, @"^\[[^|]+\|([\s\S]*)\]$");
             return match.Success ? match.Groups[1].Value : null;
         }
+
+        // The only way to tell where a reply stream stands: ODrive replies carry no echo, but
+        // "f <n>" with n above AXIS_COUNT reads nothing, changes nothing and answers
+        // "invalid motor <n>" through the same in-order sink (cmd_get_feedback).
+        public static string SyncRequest(uint marker) => "f " + marker.ToString(CultureInfo.InvariantCulture);
+        public static string SyncEcho(uint marker) => SyncEchoPrefix + marker.ToString(CultureInfo.InvariantCulture);
+        public static bool IsSyncEcho(string line) => line != null && line.StartsWith(SyncEchoPrefix, StringComparison.Ordinal);
+
+        public static bool TryParseSyncEcho(string line, out uint marker)
+        {
+            marker = 0;
+            return IsSyncEcho(line)
+                && uint.TryParse(line.Substring(SyncEchoPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out marker);
+        }
+
+        private const string SyncEchoPrefix = "invalid motor ";
 
         public static bool IsOffbFailure(string value) => value == "ERR" || value == "NOT_FOUND";
 

@@ -20,17 +20,20 @@ namespace OdriveWheel.SimHubPlugin
 
     public sealed class ParameterResult
     {
-        public ParameterResult(ParameterStatus status, string value = null, string detail = null)
+        public ParameterResult(ParameterStatus status, string value = null, string detail = null, bool lineWritten = false)
         {
             Status = status;
             Value  = value;
             Detail = detail;
+            LineWritten = lineWritten;
         }
 
         public ParameterStatus Status { get; }
         public string Value  { get; }
         public string Detail { get; }
         public bool   IsOk => Status == ParameterStatus.Ok;
+        /// <summary>The command went out. If it then failed, the board may still have acted on it.</summary>
+        public bool   LineWritten { get; }
     }
 
     /// <summary>
@@ -72,8 +75,9 @@ namespace OdriveWheel.SimHubPlugin
         public const int SaveSilenceMs        = 200;
 
         // Safety net for the blocking calls: the worker completes every command on its own,
-        // this only matters if it is stuck in a driver call.
-        private const int BlockingMarginMs = 3000;
+        // this only matters if it is stuck in a driver call. Covers the wait in the queue
+        // and for the reply stream to get back in sync.
+        private const int BlockingMarginMs = 5000;
 
         private readonly IOdriveSerialService _serial;
         private readonly Action<string> _log;
@@ -124,11 +128,11 @@ namespace OdriveWheel.SimHubPlugin
                 var request = new SerialRequest(OdriveProtocol.OdriveWrite(path, value), ReplyMode.SilenceIsOk,
                                                 OdriveWriteSilenceMs, priority, cancellation: cancellation);
                 var result = await _serial.SendAsync(request).ConfigureAwait(false);
-                if (result.Outcome == SerialOutcome.Silence) return new ParameterResult(ParameterStatus.Ok, value);
+                if (result.Outcome == SerialOutcome.Silence) return new ParameterResult(ParameterStatus.Ok, value, lineWritten: true);
                 if (result.Outcome == SerialOutcome.Reply)
                 {
                     _log("write " + path + "=" + value + " rejected: " + result.Reply);
-                    return new ParameterResult(ParameterStatus.Rejected, detail: result.Reply);
+                    return new ParameterResult(ParameterStatus.Rejected, detail: result.Reply, lineWritten: true);
                 }
                 return MapFailure(result);
             }
@@ -152,7 +156,7 @@ namespace OdriveWheel.SimHubPlugin
             if (result.Outcome == SerialOutcome.BlockedByStop) return MapFailure(result);
             // The board reboots right after saving, so a failing link afterwards is expected.
             return result.LineWritten
-                ? new ParameterResult(ParameterStatus.Ok)
+                ? new ParameterResult(ParameterStatus.Ok, lineWritten: true)
                 : MapFailure(result);
         }
 
@@ -187,10 +191,10 @@ namespace OdriveWheel.SimHubPlugin
         {
             if (result.Outcome != SerialOutcome.Reply) return MapFailure(result);
             var value = OdriveProtocol.ExtractOffbValue(result.Reply);
-            if (value == null) return new ParameterResult(ParameterStatus.Rejected, detail: result.Reply);
+            if (value == null) return new ParameterResult(ParameterStatus.Rejected, detail: result.Reply, lineWritten: true);
             return OdriveProtocol.IsOffbFailure(value)
-                ? new ParameterResult(ParameterStatus.Rejected, detail: value)
-                : new ParameterResult(ParameterStatus.Ok, value);
+                ? new ParameterResult(ParameterStatus.Rejected, detail: value, lineWritten: true)
+                : new ParameterResult(ParameterStatus.Ok, value, lineWritten: true);
         }
 
         private static ParameterResult MapOdriveRead(SerialResult result)
@@ -198,8 +202,8 @@ namespace OdriveWheel.SimHubPlugin
             if (result.Outcome != SerialOutcome.Reply) return MapFailure(result);
             var reply = result.Reply.Trim();
             return OdriveProtocol.IsOdriveFailure(reply)
-                ? new ParameterResult(ParameterStatus.Rejected, detail: reply)
-                : new ParameterResult(ParameterStatus.Ok, reply);
+                ? new ParameterResult(ParameterStatus.Rejected, detail: reply, lineWritten: true)
+                : new ParameterResult(ParameterStatus.Ok, reply, lineWritten: true);
         }
 
         private static ParameterResult MapFailure(SerialResult result)
@@ -207,13 +211,13 @@ namespace OdriveWheel.SimHubPlugin
             switch (result.Outcome)
             {
                 case SerialOutcome.Timeout:
-                    return new ParameterResult(ParameterStatus.Timeout, detail: result.Detail ?? "no reply");
+                    return new ParameterResult(ParameterStatus.Timeout, detail: result.Detail ?? "no reply", lineWritten: result.LineWritten);
                 case SerialOutcome.Cancelled:
-                    return new ParameterResult(ParameterStatus.Cancelled, detail: result.Detail ?? "cancelled");
+                    return new ParameterResult(ParameterStatus.Cancelled, detail: result.Detail ?? "cancelled", lineWritten: result.LineWritten);
                 case SerialOutcome.BlockedByStop:
                     return new ParameterResult(ParameterStatus.BlockedByStop, detail: result.Detail);
                 default:
-                    return new ParameterResult(ParameterStatus.Unavailable, detail: result.Detail ?? result.Outcome.ToString());
+                    return new ParameterResult(ParameterStatus.Unavailable, detail: result.Detail ?? result.Outcome.ToString(), lineWritten: result.LineWritten);
             }
         }
     }

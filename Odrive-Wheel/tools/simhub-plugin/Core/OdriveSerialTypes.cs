@@ -137,6 +137,7 @@ namespace OdriveWheel.SimHubPlugin
         private volatile int _state = (int)StopState.Requested;
         private volatile string _detail;
         private long _writtenAfterMs = -1;
+        private volatile int _connectGeneration;
 
         public StopState State  => (StopState)_state;
         public string    Detail => _detail;
@@ -146,6 +147,9 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>Milliseconds from the request to the written stop line, -1 if not written.</summary>
         public long WrittenAfterMs => Interlocked.Read(ref _writtenAfterMs);
 
+        /// <summary>The connection the result belongs to, see SerialStatus.ConnectGeneration.</summary>
+        public int ConnectGeneration => _connectGeneration;
+
         public bool WaitForResult(int timeoutMs) => _finished.Wait(timeoutMs);
 
         internal void MarkWritten()
@@ -154,9 +158,10 @@ namespace OdriveWheel.SimHubPlugin
                 _state = (int)StopState.Written;
         }
 
-        internal void Finish(StopState state, string detail)
+        internal void Finish(StopState state, string detail, int connectGeneration = 0)
         {
             _detail = detail;
+            _connectGeneration = connectGeneration;
             _state  = (int)state;
             _finished.Set();
         }
@@ -175,8 +180,14 @@ namespace OdriveWheel.SimHubPlugin
         public int IdleWaitMs          { get; set; } = 100;
         public int MaxQueueWaitMs      { get; set; } = 2000;
         public int MaxQueuedCommands   { get; set; } = 256;
-        /// <summary>Quiet period after a timeout, so a late reply cannot reach the next command.</summary>
-        public int DrainMs             { get; set; } = 30;
+        /// <summary>Gives the axis time to leave closed loop before the stop checks its state.</summary>
+        public int StopSettleMs        { get; set; } = 30;
+        /// <summary>How long a command waits for the reply stream to get back in sync.</summary>
+        public int ResyncTimeoutMs     { get; set; } = 1000;
+        /// <summary>The same for an OpenFFBoard command, which then goes out without the sync.</summary>
+        public int ResyncEchoedTimeoutMs { get; set; } = 300;
+        /// <summary>A sync line can get lost, so it is repeated at this interval.</summary>
+        public int ResyncRetryMs       { get; set; } = 200;
         /// <summary>Line-settle delay after opening: a CDC that resets RX on DTR would eat the first character.</summary>
         public int OpenSettleMs        { get; set; } = 20;
         public int ReconnectIntervalMs { get; set; } = 1000;
