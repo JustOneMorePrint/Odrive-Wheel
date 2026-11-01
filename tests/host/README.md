@@ -13,10 +13,16 @@ make -C tests/host check
 ```
 
 Windows (MSYS2 mit den Paketen `mingw-w64-x86_64-gcc` und `mingw-w64-x86_64-make`,
-in der Shell „MSYS2 MINGW64“):
+in der Shell „MSYS2 MINGW64“, git im `PATH`):
 
 ```bash
-mingw32-make -C tests/host check
+mingw32-make -C tests/host check CXX=g++
+```
+
+Zusätzlich nur unter Windows, in PowerShell (siehe „Tests der Build-Kennung“):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\host\test_build_local.ps1
 ```
 
 Aufräumen: `make -C tests/host clean`.
@@ -53,7 +59,21 @@ der Merge-Commit. `head=` gibt es nur dort.
 | Datei | Prüft | Voraussetzung |
 |---|---|---|
 | `test_build_info.sh` (läuft mit `check`) | Heikle Branch-Namen kommen über die echte Makefile-Regel Byte für Byte im kompilierten `BUILD_ID` an und werden nicht ausgewertet; zudem Header-Aktualisierung, `-dirty`, detached HEAD, Kürzung, Ablehnung ungültiger Werte | git, make, g++ |
-| `check_firmware_rebuild.sh` (eigener CI-Schritt im Firmware-Build) | Kennung in der `.bin`; unveränderter Wiederholungsbuild kompiliert nichts; geänderte Metadaten kompilieren nur `cmd_table.cpp` neu und landen in der `.bin`; danach wieder identische `.bin` | Linux/WSL, ARM-Toolchain, fertiger Build, sauberer Checkout |
+| `check_firmware_rebuild.sh` (eigener CI-Schritt im Firmware-Build) | Kennung in der `.bin`; unveränderter Wiederholungsbuild kompiliert nichts; geänderte Metadaten kompilieren nur `cmd_table.cpp` neu und landen in der `.bin`; danach wieder identische `.bin` | ARM-Toolchain, fertiger Build, sauberer Checkout |
+| `test_build_local.ps1` (nur Windows, nicht Teil von `check`) | `build-local.ps1` in einem Pfad mit Leerzeichen, Klammern und Apostroph: vollständiger Shell-Befehl, `-NoClean`, Kennung, Fehlercodes bei Shell, Verzeichniswechsel und Make, alte Artefakte, `MSYS2_ENV_CONV_EXCL` | PowerShell, MSYS2 mit `mingw32-make`, git, Python mit den Autogen-Paketen. Die Firmware ist dabei eine Attrappe (kleines Makefile); die ARM-Toolchain wird nicht gebraucht |
 
 Lässt das Dateisystem einen Branch-Namen nicht zu (Windows: z. B. `"` oder `|`), meldet
 `test_build_info.sh` ihn als `SKIPPED` und prüft ihn nur über die Umgebungsvariable.
+
+`test_build_local.ps1` endet mit Code 2 und `NOT RUN`, wenn ein Werkzeug fehlt. Das ist kein
+bestandener Test. Es installiert nichts.
+
+`check_firmware_rebuild.sh` unter Windows, nach einem Build in der Shell „MSYS2 MINGW64“ und
+aus einem sauberen Checkout:
+
+```bash
+MAKE=mingw32-make sh tests/host/check_firmware_rebuild.sh
+```
+
+Das Skript ruft Make direkt auf, Autogen läuft dabei nicht. Deshalb gilt die Erwartung „kompiliert
+nichts“ nur hier und nicht für `build-local.ps1 -NoClean`, das Autogen erneut ausführt.
