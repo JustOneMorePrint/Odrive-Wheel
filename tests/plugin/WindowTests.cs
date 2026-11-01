@@ -15,6 +15,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
         [DllImport("user32.dll")]
         private static extern bool IsWindowEnabled(IntPtr hWnd);
 
+        // Only detects a hang, opening a window has no time requirement. The first window of a
+        // process loads all of WPF, which took over 5 s on a CI machine.
+        private const int WindowStartLimitMs = 20000;
+
         private sealed class WindowRig : IDisposable
         {
             public Rig Rig { get; }
@@ -31,8 +35,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
                                                   () => Rig.HidState, m => Console.WriteLine("window: " + m),
                                                   panels.Length > 0 ? panels : null);
                 }, m => Console.WriteLine("host: " + m));
+                var watch = System.Diagnostics.Stopwatch.StartNew();
                 Host.Show();
-                Check.True(Host.WaitUntilShown(5000), "the window should open");
+                Check.True(Host.WaitUntilShown(WindowStartLimitMs), "the window should open");
+                if (watch.ElapsedMilliseconds > 2000) Console.WriteLine("note: the window took " + watch.ElapsedMilliseconds + " ms to open");
             }
 
             public T On<T>(Func<OdriveConfigWindow, T> read)
@@ -202,7 +208,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
                 rig.Host.Show();
                 Check.True(Wait.Until(() => rig.Created == 2), "a new window after closing");
-                Check.True(rig.Host.WaitUntilShown(5000), "shown again");
+                Check.True(rig.Host.WaitUntilShown(WindowStartLimitMs), "shown again");
             }
         }
 
@@ -245,13 +251,13 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 });
 
                 host.Show();
-                Check.True(inFactory.Wait(5000), "the factory should be running");
+                Check.True(inFactory.Wait(WindowStartLimitMs), "the factory should be running");
 
                 // The window doesn't exist yet, so all Close can do is leave a note.
                 host.Close(30);
                 release.Set();
 
-                Check.True(Wait.Until(() => !host.IsOpen, 5000), "the thread should end by itself");
+                Check.True(Wait.Until(() => !host.IsOpen, WindowStartLimitMs), "the thread should end by itself");
                 Check.True(window != null, "the factory did finish");
                 Check.True(window != null && window.Dispatcher.HasShutdownFinished, "no dispatcher keeps running");
                 Check.Equal(0, Volatile.Read(ref loaded), "the window never showed");
@@ -269,8 +275,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
                         () => new OdriveConfigWindow(rig.Service, rig.Parameters, OdriveParameterCatalog.LoadEmbedded(), () => rig.HidState, _ => { }),
                         m => Console.WriteLine("host: " + m));
                     host.Show();
-                    host.Close(3000);
-                    Check.True(Wait.Until(() => !host.IsOpen, 3000), "round " + i + ": the thread should end");
+                    host.Close(WindowStartLimitMs);
+                    Check.True(Wait.Until(() => !host.IsOpen, WindowStartLimitMs), "round " + i + ": the thread should end");
                     host.Close(2000);
                 }
             }
@@ -285,7 +291,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
                 rig.Host.Show();
                 Check.True(Wait.Until(() => rig.Created == 2), "a new window");
-                Check.True(rig.Host.WaitUntilShown(5000), "shown again");
+                Check.True(rig.Host.WaitUntilShown(WindowStartLimitMs), "shown again");
                 Check.True(rig.Host.IsOpen, "open");
             }
         }
