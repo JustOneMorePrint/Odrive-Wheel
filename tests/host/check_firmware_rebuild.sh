@@ -1,7 +1,9 @@
 #!/bin/sh
 # Checks the build id on a finished firmware build. Run it from a clean checkout
 # after `make` in Odrive-Wheel, with the same environment as that build; it needs
-# the ARM toolchain. The binary is unchanged afterwards, or the script fails:
+# the ARM toolchain and calls make directly, so autogen does not run again. Set
+# MAKE to use another make, e.g. mingw32-make.
+# The binary is unchanged afterwards, or the script fails:
 #   1. the binary holds the id of the checkout,
 #   2. an unchanged rebuild compiles nothing,
 #   3. changed metadata recompiles cmd_table.cpp only and reaches the binary,
@@ -9,6 +11,9 @@
 
 set -eu
 export LC_ALL=C
+
+# See test_build_info.sh: keeps the branch name intact on its way into a native make.
+export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL;}BUILD_GIT_BRANCH"
 
 cd "$(dirname "$0")/../../Odrive-Wheel"
 
@@ -24,7 +29,7 @@ fail() {
 }
 
 run_make() {
-    make -j"$(nproc)" > "$log" 2>&1 || fail "make failed"
+    "${MAKE:-make}" -j"$(nproc)" > "$log" 2>&1 || fail "make failed"
 }
 
 compile_count() {
@@ -59,7 +64,7 @@ run_make
 [ "$(bin_sum)" = "$original_sum" ] || fail "unchanged rebuild changed the binary"
 echo "ok: unchanged rebuild compiled nothing"
 
-changed_branch="ci'\"\$(touch\${IFS}PWNED)\`touch\${IFS}PWNED\`"
+changed_branch="ci=/y'\"\$(touch\${IFS}PWNED)\`touch\${IFS}PWNED\`"
 changed_id=$(printf '%s' "$id" | sed 's/ branch=.*//')" branch=$changed_branch"
 (
     export BUILD_GIT_BRANCH="$changed_branch"

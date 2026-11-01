@@ -10,6 +10,8 @@
 # Environment, for CI where HEAD is a detached merge commit:
 #   BUILD_GIT_BRANCH   branch to report instead of the checked-out one
 #   BUILD_GIT_PR_HEAD  PR head commit, reported next to the built checkout
+# An MSYS shell calling a native make must list BUILD_GIT_BRANCH in
+# MSYS2_ENV_CONV_EXCL, or MSYS rewrites path-like values (x=/y becomes x=Y:/).
 #
 # Result: BUILD_ID = "<checkout>[-dirty] [head=<pr head>] branch=<branch>"
 
@@ -38,6 +40,8 @@ if [ -z "$branch" ]; then
 fi
 case $branch in
     *[[:cntrl:]]*) fail "control character in branch name" ;;
+    # git forbids ':' in branch names, but every MSYS rewrite produces one.
+    *:*) fail "':' in branch name, probably rewritten by MSYS: add BUILD_GIT_BRANCH to MSYS2_ENV_CONV_EXCL" ;;
 esac
 
 id=${checkout:-unknown}

@@ -13,6 +13,10 @@ CXX=${CXX:-g++}
 MAKE=${MAKE:-make}
 unset BUILD_GIT_BRANCH BUILD_GIT_PR_HEAD
 
+# MSYS rewrites path-like values on their way into a native make (x=/y becomes
+# x=Y:/). Exempt only the branch name and keep what the caller has listed.
+export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL;}BUILD_GIT_BRANCH"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -111,6 +115,12 @@ a|b
 a#b
 %d%s%n
 x=/y
+x=/usr/bin
+a=b=/c
+=/x
+#/x
+(/x
+a"=/y
 a]b
 (x)
 {x}
@@ -181,7 +191,34 @@ check_true "control character is rejected" \
     '! (cd "$fw" && BUILD_GIT_BRANCH="$tab" sh tools/gen_build_info.sh build/build_info.h > /dev/null 2>&1)'
 check_true "non-hash PR head is rejected" \
     '! (cd "$fw" && BUILD_GIT_PR_HEAD="abc;touch PWNED" sh tools/gen_build_info.sh build/build_info.h > /dev/null 2>&1)'
+check_true "colon, as left by an MSYS rewrite, is rejected" \
+    '! (cd "$fw" && BUILD_GIT_BRANCH="x=Y:/" sh tools/gen_build_info.sh build/build_info.h > /dev/null 2>&1)'
 check_equal "rejected metadata leaves the header alone" "$before" "$(cat "$header")"
+
+# Conversion between an MSYS shell and a native make.
+if "$MAKE" --version | grep -q w64-mingw32; then
+    native_make=yes
+else
+    native_make=no
+fi
+
+# Without the exclusion a native make sees a rewritten value: the build must stop
+# instead of reporting a wrong branch. Any other make passes the value through.
+actual=$(export BUILD_GIT_BRANCH='x=/y' MSYS2_ENV_CONV_EXCL=; build_id 2> /dev/null) || actual=build-stopped
+if [ "$native_make" = yes ]; then
+    check_equal "rewritten branch stops the build" build-stopped "$actual"
+else
+    check_equal "branch passes through without exclusion" "$(head_hash) branch=x=/y" "$actual"
+fi
+
+# The exclusion covers the branch name only, conversion stays on for the rest.
+printf 'all:\n\t@printf "%%s" "$$PROBE_OTHER"\n' > "$work/probe.mk"
+actual=$(export PROBE_OTHER='x=/y'; "$MAKE" -s -f "$work/probe.mk")
+if [ "$native_make" = yes ]; then
+    check_true "other variables are still converted" '[ "$actual" != "x=/y" ]'
+else
+    check_equal "other variables pass through" 'x=/y' "$actual"
+fi
 
 printf 'test_build_info.sh: %d checks, %d failed, %d skipped\n' "$checks" "$failures" "$skipped"
 [ "$failures" -eq 0 ]
