@@ -17,7 +17,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private readonly List<string> _lines = new List<string>();
         private readonly List<string> _wire = new List<string>();
         private readonly List<(long dueMs, string line)> _replies = new List<(long, string)>();
-        private long _lastReplyDueMs;
+        private long _lastOdriveDueMs;
+        private long _lastOffbDueMs;
         private Action _beforeNextRead;
         private Action _beforeNextWrite;
         private Action _beforeNextDiscard;
@@ -56,6 +57,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public volatile bool Mute;
         /// <summary>Only the ODrive channel stays silent, like a stuck sink in the firmware.</summary>
         public volatile bool MuteOdriveChannel;
+        /// <summary>Only the OpenFFBoard channel stays silent.</summary>
+        public volatile bool MuteOffbChannel;
         public volatile bool IgnoreStop;
         public volatile int  ReplyDelayMs;
         public volatile bool FailNextRead;
@@ -105,7 +108,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public void OnNextWrite(Action action) => Volatile.Write(ref _beforeNextWrite, action);
         public void OnNextDiscard(Action action) => Volatile.Write(ref _beforeNextDiscard, action);
 
-        /// <summary>The commands the board received, without the sync lines.</summary>
+        /// <summary>The commands the board received, without the sync lines of either channel.</summary>
         public string[] Lines
         {
             get { lock (_lock) return _lines.ToArray(); }
@@ -228,7 +231,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
             lock (_lock)
             {
                 _replies.Clear();
-                _lastReplyDueMs = 0;
+                _lastOdriveDueMs = 0;
+                _lastOffbDueMs = 0;
                 Monitor.PulseAll(_lock);
             }
         }
@@ -254,6 +258,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
             if (line.StartsWith("f ", StringComparison.Ordinal))
             {
                 Reply("invalid motor " + line.Substring(2));
+                return;
+            }
+            // parse_one with a class the firmware doesn't have, the other sync line of the service.
+            if (line.StartsWith("odwsync.", StringComparison.Ordinal))
+            {
+                ProcessOffb(line, line.IndexOf('?'));
                 return;
             }
             _lines.Add(line);
@@ -339,10 +349,15 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private void Reply(string text)
         {
             if (Mute) return;
-            if (MuteOdriveChannel && !text.StartsWith("[", StringComparison.Ordinal)) return;
-            // The firmware answers in order, however long each answer takes.
-            _lastReplyDueMs = Math.Max(_clock.ElapsedMilliseconds + ReplyDelayMs, _lastReplyDueMs);
-            AddReply(_lastReplyDueMs, text);
+            bool offb = text.StartsWith("[", StringComparison.Ordinal);
+            if (offb ? MuteOffbChannel : MuteOdriveChannel) return;
+            // Each channel answers in order, however long each answer takes. The two are
+            // independent: ODrive replies run through a buffered sink, OpenFFBoard replies go
+            // straight to the USB FIFO, so one can overtake the other.
+            long due = _clock.ElapsedMilliseconds + ReplyDelayMs;
+            if (offb) due = _lastOffbDueMs = Math.Max(due, _lastOffbDueMs);
+            else      due = _lastOdriveDueMs = Math.Max(due, _lastOdriveDueMs);
+            AddReply(due, text);
         }
     }
 

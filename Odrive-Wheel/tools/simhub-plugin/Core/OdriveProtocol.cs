@@ -47,9 +47,13 @@ namespace OdriveWheel.SimHubPlugin
             return match.Success ? match.Groups[1].Value : null;
         }
 
-        // The only way to tell where a reply stream stands: ODrive replies carry no echo, but
-        // "f <n>" with n above AXIS_COUNT reads nothing, changes nothing and answers
-        // "invalid motor <n>" through the same in-order sink (cmd_get_feedback).
+        // The only way to tell where a reply stream stands, and the firmware has two of them.
+        // ODrive replies run through a buffered sink, OpenFFBoard replies go straight to the USB
+        // FIFO (process_line, cmdparser_cdc_write). Each is in order, but one can overtake the
+        // other, so an echo says something about its own path only.
+        //
+        // ODrive replies carry no echo, but "f <n>" with n above AXIS_COUNT reads nothing,
+        // changes nothing and answers "invalid motor <n>" through the sink (cmd_get_feedback).
         public static string SyncRequest(uint marker) => "f " + marker.ToString(CultureInfo.InvariantCulture);
         public static string SyncEcho(uint marker) => SyncEchoPrefix + marker.ToString(CultureInfo.InvariantCulture);
         public static bool IsSyncEcho(string line) => line != null && line.StartsWith(SyncEchoPrefix, StringComparison.Ordinal);
@@ -62,6 +66,25 @@ namespace OdriveWheel.SimHubPlugin
         }
 
         private const string SyncEchoPrefix = "invalid motor ";
+
+        // An OpenFFBoard echo names the path, not the request: a late reply looks exactly like
+        // the current one. A class the firmware doesn't have runs no handler and answers
+        // NOT_FOUND with the whole head, so a counter in the name makes that reply unique (parse_one).
+        public static string OffbSyncRequest(uint marker) => OffbSyncHead + marker.ToString(CultureInfo.InvariantCulture) + "?";
+        public static string OffbSyncEcho(uint marker) => "[" + OffbSyncRequest(marker) + OffbSyncEchoEnd;
+        public static bool IsOffbSyncEcho(string line) => line != null && line.StartsWith("[" + OffbSyncHead, StringComparison.Ordinal);
+
+        public static bool TryParseOffbSyncEcho(string line, out uint marker)
+        {
+            marker = 0;
+            if (!IsOffbSyncEcho(line) || !line.EndsWith("?" + OffbSyncEchoEnd, StringComparison.Ordinal)) return false;
+            int start = OffbSyncHead.Length + 1;
+            int end = line.Length - OffbSyncEchoEnd.Length - 1;
+            return uint.TryParse(line.Substring(start, end - start), NumberStyles.None, CultureInfo.InvariantCulture, out marker);
+        }
+
+        private const string OffbSyncHead = "odwsync.m";
+        private const string OffbSyncEchoEnd = "|NOT_FOUND]";
 
         public static bool IsOffbFailure(string value) => value == "ERR" || value == "NOT_FOUND";
 

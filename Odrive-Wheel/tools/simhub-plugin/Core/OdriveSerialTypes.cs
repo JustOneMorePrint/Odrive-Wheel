@@ -182,10 +182,8 @@ namespace OdriveWheel.SimHubPlugin
         public int MaxQueuedCommands   { get; set; } = 256;
         /// <summary>Gives the axis time to leave closed loop before the stop checks its state.</summary>
         public int StopSettleMs        { get; set; } = 30;
-        /// <summary>How long a command waits for the reply stream to get back in sync.</summary>
+        /// <summary>How long a command waits for its reply stream to get back in sync.</summary>
         public int ResyncTimeoutMs     { get; set; } = 1000;
-        /// <summary>The same for an OpenFFBoard command, which then goes out without the sync.</summary>
-        public int ResyncEchoedTimeoutMs { get; set; } = 300;
         /// <summary>A sync line can get lost, so it is repeated at this interval.</summary>
         public int ResyncRetryMs       { get; set; } = 200;
         /// <summary>Line-settle delay after opening: a CDC that resets RX on DTR would eat the first character.</summary>

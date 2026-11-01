@@ -97,7 +97,8 @@ namespace OdriveWheel.SimHubPlugin
 
         // Worker thread only.
         private bool _transportOpen;
-        private bool _resyncNeeded;
+        private bool _odriveOutOfSync;
+        private bool _offbOutOfSync;
         private bool _linePartial;
         private uint _nextSyncMarker = 1000000;
         private long _nextConnectTicks;
@@ -279,7 +280,7 @@ namespace OdriveWheel.SimHubPlugin
             if (_wantReleased)
             {
                 CloseTransport();
-                _resyncNeeded = true;   // another application may use the port meanwhile
+                MarkAllOutOfSync();   // another application may use the port meanwhile
                 _state = SerialConnectionState.Released;
                 FailAllQueued(SerialOutcome.PortReleased, DetailFor(SerialConnectionState.Released));
                 _wake.WaitOne(_options.IdleWaitMs);
@@ -343,8 +344,8 @@ namespace OdriveWheel.SimHubPlugin
             }
             catch (TransportWriteTimeoutException ex)
             {
-                _linePartial  = true;
-                _resyncNeeded = true;
+                _linePartial = true;
+                MarkAllOutOfSync();
                 Complete(command, new SerialResult(SerialOutcome.Timeout, detail: ex.Message + ", not sent"));
             }
             catch (TransportException ex)
@@ -386,37 +387,47 @@ namespace OdriveWheel.SimHubPlugin
         // After a write timeout part of a line may sit in the board's buffer. An empty line
         // ends it; the firmware answers that with "unknown command", so the stream needs a
         // resync afterwards.
+        //
+        // A command only needs its own reply path in sync: a late reply from the other one has
+        // another form and can't pass for its reply. So a silent ODrive channel, for example a
+        // stuck sink, doesn't take the OpenFFBoard commands with it.
         private SerialResult PrepareLine(SerialRequest request)
         {
             if (_linePartial)
             {
                 _transport.WriteLine(string.Empty, _options.WriteTimeoutMs);
-                _linePartial  = false;
-                _resyncNeeded = true;
+                _linePartial = false;
+                MarkAllOutOfSync();
             }
-            if (!_resyncNeeded) return null;
-
-            // An OpenFFBoard reply carries its echo and takes a direct path in the firmware.
-            // These commands don't depend on the sync, so a silent ODrive channel, for
-            // example a stuck sink, must not take them with it.
-            bool hasEcho = request.Mode == ReplyMode.OffbEcho;
-            var refusal = Resync(hasEcho ? _options.ResyncEchoedTimeoutMs : _options.ResyncTimeoutMs,
-                                 () => AbortReason(request.Cancellation, lineWritten: false));
-            if (hasEcho && refusal != null && refusal.Outcome == SerialOutcome.Timeout)
-            {
-                _log("the reply stream is out of sync, sending " + request.Line + " anyway: its reply carries an echo");
-                return null;
-            }
-            return refusal;
+            if (!IsOutOfSync(request.Mode)) return null;
+            return Resync(request.Mode, _options.ResyncTimeoutMs,
+                          () => AbortReason(request.Cancellation, lineWritten: false));
         }
 
-        // ODrive replies carry no echo, and after a timeout or an abort one can still arrive at
-        // any time. Waiting proves nothing, so this asks: everything older than the echo of a
-        // sync line has passed, the firmware answers in order. Lines before it are late replies.
-        // The line can get lost, so it is repeated. Echoes of repeats that arrive later are
-        // recognisable and never taken for a reply.
-        private SerialResult Resync(int timeoutMs, Func<SerialResult> abortReason)
+        private bool IsOutOfSync(ReplyMode mode)
+            => mode == ReplyMode.OffbEcho ? _offbOutOfSync : _odriveOutOfSync;
+
+        private void SetOutOfSync(ReplyMode mode, bool outOfSync)
         {
+            if (mode == ReplyMode.OffbEcho) _offbOutOfSync = outOfSync;
+            else _odriveOutOfSync = outOfSync;
+        }
+
+        private void MarkAllOutOfSync()
+        {
+            _odriveOutOfSync = true;
+            _offbOutOfSync   = true;
+        }
+
+        // After a timeout or an abort a reply can still arrive at any time, and neither an ODrive
+        // reply nor an OpenFFBoard echo says which request it belongs to. Waiting proves nothing,
+        // so this asks: everything older than the echo of a sync line has passed on that reply
+        // path, the firmware answers in order. Lines before it are late replies. The line can
+        // get lost, so it is repeated. Echoes of repeats that arrive later are recognisable and
+        // never taken for a reply.
+        private SerialResult Resync(ReplyMode mode, int timeoutMs, Func<SerialResult> abortReason)
+        {
+            bool offb = mode == ReplyMode.OffbEcho;
             long start = Stopwatch.GetTimestamp();
             long lastSent = 0;
             uint firstMarker = _nextSyncMarker;
@@ -432,7 +443,9 @@ namespace OdriveWheel.SimHubPlugin
 
                 if (lastSent == 0 || ElapsedMs(lastSent) >= _options.ResyncRetryMs)
                 {
-                    _transport.WriteLine(OdriveProtocol.SyncRequest(_nextSyncMarker), _options.WriteTimeoutMs);
+                    _transport.WriteLine(offb ? OdriveProtocol.OffbSyncRequest(_nextSyncMarker)
+                                              : OdriveProtocol.SyncRequest(_nextSyncMarker),
+                                         _options.WriteTimeoutMs);
                     _nextSyncMarker++;
                     lastSent = Stopwatch.GetTimestamp();
                 }
@@ -442,18 +455,16 @@ namespace OdriveWheel.SimHubPlugin
                 line = line.TrimEnd('\r', '\n');
                 if (line.Length == 0) continue;
 
-                if (OdriveProtocol.TryParseSyncEcho(line, out uint marker))
+                uint marker;
+                bool isEcho = offb ? OdriveProtocol.TryParseOffbSyncEcho(line, out marker)
+                                   : OdriveProtocol.TryParseSyncEcho(line, out marker);
+                if (isEcho && marker >= firstMarker && marker < _nextSyncMarker)
                 {
-                    if (marker >= firstMarker && marker < _nextSyncMarker)
-                    {
-                        _resyncNeeded = false;
-                        return null;
-                    }
+                    SetOutOfSync(mode, false);
+                    return null;
                 }
-                else
-                {
+                if (!OdriveProtocol.IsSyncEcho(line) && !OdriveProtocol.IsOffbSyncEcho(line))
                     _log("discarded late reply: " + line);
-                }
             }
         }
 
@@ -467,7 +478,7 @@ namespace OdriveWheel.SimHubPlugin
                 var abort = AbortReason(request.Cancellation, lineWritten: true);
                 if (abort != null)
                 {
-                    _resyncNeeded = true;
+                    SetOutOfSync(request.Mode, true);
                     return abort;
                 }
 
@@ -475,7 +486,7 @@ namespace OdriveWheel.SimHubPlugin
                 if (remaining <= 0)
                 {
                     // In both cases a reply can still be on its way.
-                    _resyncNeeded = true;
+                    SetOutOfSync(request.Mode, true);
                     if (request.Mode == ReplyMode.SilenceIsOk)
                         return new SerialResult(SerialOutcome.Silence, lineWritten: true);
                     return new SerialResult(SerialOutcome.Timeout, detail: "no reply", lineWritten: true);
@@ -489,8 +500,12 @@ namespace OdriveWheel.SimHubPlugin
                 switch (request.Mode)
                 {
                     case ReplyMode.OffbEcho:
+                        if (OdriveProtocol.IsOffbSyncEcho(line))
+                        {
+                            _log("discarded stale reply: " + line);
+                        }
                         // A reply can span lines, it ends with the closing bracket.
-                        if (partial != null)
+                        else if (partial != null)
                         {
                             partial += "\n" + line;
                             if (partial.EndsWith("]", StringComparison.Ordinal))
@@ -572,8 +587,8 @@ namespace OdriveWheel.SimHubPlugin
                 try
                 {
                     // The leading line end finishes whatever an aborted write left behind.
-                    // It gets an answer, so the stream needs a resync before the next command.
-                    _resyncNeeded = true;
+                    // It gets an answer, so the streams need a resync before the next command.
+                    MarkAllOutOfSync();
                     _transport.WriteLine("\n" + StopLineAxis0, _options.WriteTimeoutMs);
                     _linePartial = false;
                     ticket.MarkWritten();
@@ -611,7 +626,7 @@ namespace OdriveWheel.SimHubPlugin
         // wrong confirmation is worse than a missing one.
         private bool ReadsIdleOverSerial()
         {
-            var unsynced = Resync(_options.StopReadbackMs, () =>
+            var unsynced = Resync(ReplyMode.OdriveLine, _options.StopReadbackMs, () =>
                 _shutdownRequested ? new SerialResult(SerialOutcome.ShuttingDown) : null);
             if (unsynced != null) return false;
 
@@ -622,7 +637,7 @@ namespace OdriveWheel.SimHubPlugin
                 var reply = ReadOneLine(_options.StopReadbackMs);
                 if (reply == null)
                 {
-                    _resyncNeeded = true;
+                    _odriveOutOfSync = true;
                     return false;
                 }
                 if (!int.TryParse(reply.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int state)
@@ -746,8 +761,8 @@ namespace OdriveWheel.SimHubPlugin
             bool wasOpen = _transportOpen;
             CloseTransport();
             // The board may have kept running, with a reply or part of a line pending.
-            _resyncNeeded = true;
-            _lastError    = reason;
+            MarkAllOutOfSync();
+            _lastError = reason;
             if (wasOpen) _log("connection lost: " + reason);
             if (!_wantReleased) _state = SerialConnectionState.Searching;
             ScheduleReconnect();

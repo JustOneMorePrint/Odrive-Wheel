@@ -415,7 +415,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 var offb = rig.Parameters.Read("axis.range", FieldProtocol.Openffb);
                 Check.Equal("900", offb.Value, "the echoed command still works");
-                Check.True(watch.ElapsedMilliseconds < 800, "after a short try: " + watch.ElapsedMilliseconds + " ms");
+                Check.True(watch.ElapsedMilliseconds < 800, "without waiting for that channel: " + watch.ElapsedMilliseconds + " ms");
 
                 var plain = rig.Send("r vbus_voltage");
                 Check.Equal(SerialOutcome.Timeout, plain.Result.Outcome, "a command without echo waits for the sync");
@@ -513,6 +513,369 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.Equal(StopState.Unconfirmed, ticket.State, "the axis is still armed");
                 running.Wait(1000);
             }
+        }
+    }
+
+    /// <summary>
+    /// An OpenFFBoard echo names the path, not the request, so a late reply looks exactly like
+    /// the current one. These replies also take their own way through the firmware: only a
+    /// marker on that way can tell where the stream stands, whatever the ODrive channel does.
+    /// </summary>
+    public static class OffbResyncTests
+    {
+        private const string Range = "axis.range";
+
+        private static bool IsOdriveSync(string line) => line.StartsWith("f ", StringComparison.Ordinal);
+        private static bool IsOffbSync(string line) => line.StartsWith("odwsync.", StringComparison.Ordinal);
+
+        private static SerialResult ShortRead(Rig rig)
+            => rig.Send(Range + "?", ReplyMode.OffbEcho, 100, echo: "[" + Range + "?").Result;
+
+        private static uint LastMarker(Rig rig, Func<string, bool> isSync)
+        {
+            var line = rig.Board.WireLines.Last(isSync);
+            return uint.Parse(new string(line.Where(char.IsDigit).ToArray()));
+        }
+
+        // Whatever is still under way may take a few reads to pass, but it must never count.
+        private static string ReadUntilOk(Rig rig, string notThis)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                var read = rig.Parameters.Read(Range, FieldProtocol.Openffb);
+                if (read.IsOk) return read.Value;
+                Check.Equal(ParameterStatus.Timeout, read.Status, "either no value yet");
+                Check.True(read.Value != notThis, "or the right one");
+            }
+            return null;
+        }
+
+        public static void Test_late_reply_cannot_answer_a_repeated_read_with_the_odrive_channel_down()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.SetValue(Range, "900");
+                rig.Board.ReplyDelayMs = 600;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+
+                rig.Board.SetValue(Range, "1080");
+                rig.Board.ReplyDelayMs = 1000;
+                var second = rig.Parameters.ReadAsync(Range, FieldProtocol.Openffb).Result;
+
+                Check.Equal(ParameterStatus.Timeout, second.Status, "the board is too slow for this read, value " + second.Value);
+                Check.Equal(null, second.Value, "no value, certainly not the old 900");
+
+                rig.Board.ReplyDelayMs = 0;
+                Check.Equal("1080", ReadUntilOk(rig, "900"), "recovers with the new value");
+            }
+        }
+
+        public static void Test_repeated_read_gets_its_own_value_with_the_odrive_channel_down()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.SetValue(Range, "900");
+                rig.Board.ReplyDelayMs = 600;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+
+                rig.Board.SetValue(Range, "1080");
+                rig.Board.ReplyDelayMs = 0;
+                var second = rig.Parameters.ReadAsync(Range, FieldProtocol.Openffb).Result;
+
+                Check.True(second.IsOk, "second read: " + second.Detail);
+                Check.Equal("1080", second.Value, "its own value, not the old 900");
+            }
+        }
+
+        public static void Test_late_echo_cannot_confirm_a_repeated_write_with_the_odrive_channel_down()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.ReplyDelayMs = 600;
+                var first = rig.Send(Range + "=900", ReplyMode.OffbEcho, 100, echo: "[" + Range + "=");
+                Check.Equal(SerialOutcome.Timeout, first.Result.Outcome, "first write");
+
+                rig.Board.ReplyDelayMs = 0;
+                var second = rig.Parameters.WriteAsync(Range, "1080", FieldProtocol.Openffb).Result;
+
+                Check.True(second.IsOk, "second write: " + second.Detail);
+                Check.Equal("1080", second.Value, "its own echo, not the old 900");
+                Check.Equal("1080", rig.Board.Value(Range), "on the board");
+            }
+        }
+
+        public static void Test_slow_repeated_write_times_out_instead_of_taking_the_old_echo()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.ReplyDelayMs = 600;
+                var first = rig.Send(Range + "=900", ReplyMode.OffbEcho, 100, echo: "[" + Range + "=");
+                Check.Equal(SerialOutcome.Timeout, first.Result.Outcome, "first write");
+
+                rig.Board.ReplyDelayMs = 1000;
+                var second = rig.Parameters.WriteAsync(Range, "1080", FieldProtocol.Openffb).Result;
+
+                Check.Equal(ParameterStatus.Timeout, second.Status, "too slow for this write, value " + second.Value);
+                Check.Equal(null, second.Value, "no value, certainly not the old 900");
+            }
+        }
+
+        public static void Test_late_ok_cannot_answer_a_repeated_exec()
+        {
+            using (var rig = new Rig())
+            {
+                int calls = 0;
+                rig.Board.ReplyOverride = line => line != "sys.save!" ? null
+                    : Interlocked.Increment(ref calls) == 1 ? "[sys.save!|OK]" : "[sys.save!|ERR]";
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.ReplyDelayMs = 600;
+                Check.Equal(SerialOutcome.Timeout,
+                            rig.Send("sys.save!", ReplyMode.OffbEcho, 100, echo: "[sys.save!").Result.Outcome, "first exec");
+
+                rig.Board.ReplyDelayMs = 0;
+                var second = rig.Parameters.ExecOffbAsync("sys.save").Result;
+
+                Check.Equal(ParameterStatus.Rejected, second.Status, "its own ERR, not the old OK");
+                Check.Equal(2, calls, "both reached the board");
+            }
+        }
+
+        public static void Test_an_odrive_echo_says_nothing_about_offb_replies()
+        {
+            using (var rig = new Rig())
+            {
+                // The ODrive channel is fast here, its echo overtakes the late reply.
+                rig.Board.SetValue(Range, "900");
+                rig.Board.ReplyDelayMs = 300;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+
+                rig.Board.SetValue(Range, "1080");
+                rig.Board.ReplyDelayMs = 0;
+                Check.Equal("1080", rig.Parameters.ReadAsync(Range, FieldProtocol.Openffb).Result.Value, "its own value");
+            }
+        }
+
+        public static void Test_without_its_echo_an_offb_command_stays_off_the_wire()
+        {
+            using (var rig = new Rig(o => o.ResyncTimeoutMs = 120))
+            {
+                rig.Board.MuteOffbChannel = true;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+
+                var write = rig.Parameters.WriteAsync(Range, "1080", FieldProtocol.Openffb).Result;
+
+                Check.Equal(ParameterStatus.Timeout, write.Status, "outcome");
+                Check.True(!write.LineWritten, "the result says it was not sent");
+                Check.True(write.Detail.Contains("out of sync"), "says why: " + write.Detail);
+                Check.Equal(0, rig.Board.CountLine(Range + "=1080"), "must not go out");
+                Check.True(rig.Service.GetStatus().IsConnected, "the connection stays");
+
+                Check.Equal("48.000", rig.Send("r vbus_voltage").Result.Reply, "the other channel keeps working");
+
+                rig.Board.MuteOffbChannel = false;
+                var again = rig.Parameters.WriteAsync(Range, "1080", FieldProtocol.Openffb).Result;
+                Check.True(again.IsOk, "recovers as soon as the board answers: " + again.Detail);
+                Check.Equal("1080", again.Value, "with its own echo");
+            }
+        }
+
+        public static void Test_an_echo_counts_only_on_its_own_channel()
+        {
+            using (var rig = new Rig(o => o.ResyncTimeoutMs = 120))
+            {
+                rig.Board.MuteOdriveChannel = true;
+                Check.Equal(SerialOutcome.Timeout, rig.Send("r axis0.error", timeoutMs: 30).Result.Outcome, "ODrive read");
+                rig.Board.OnNextRead(() => rig.Board.Inject(OdriveProtocol.OffbSyncEcho(LastMarker(rig, IsOdriveSync))));
+
+                var plain = rig.Send("r vbus_voltage").Result;
+
+                Check.Equal(SerialOutcome.Timeout, plain.Outcome, "an OpenFFBoard echo proves nothing here");
+                Check.Equal(0, rig.Board.CountLine("r vbus_voltage"), "must not go out");
+                rig.Board.MuteOdriveChannel = false;
+
+                rig.Board.MuteOffbChannel = true;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "OpenFFBoard read");
+                rig.Board.OnNextRead(() => rig.Board.Inject(OdriveProtocol.SyncEcho(LastMarker(rig, IsOffbSync))));
+
+                var offb = rig.Parameters.ReadAsync("axis.maxtorque", FieldProtocol.Openffb).Result;
+
+                Check.Equal(ParameterStatus.Timeout, offb.Status, "an ODrive echo proves nothing here");
+                Check.Equal(0, rig.Board.CountLine("axis.maxtorque?"), "must not go out");
+            }
+        }
+
+        public static void Test_an_old_offb_echo_proves_nothing()
+        {
+            using (var rig = new Rig(o => o.ResyncTimeoutMs = 120))
+            {
+                rig.Board.MuteOffbChannel = true;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+                Check.Equal(ParameterStatus.Timeout, rig.Parameters.ReadAsync(Range, FieldProtocol.Openffb).Result.Status, "no echo");
+
+                // The echo of a sync line from before: it says nothing about what came after it.
+                rig.Board.OnNextRead(() => rig.Board.Inject(OdriveProtocol.OffbSyncEcho(1000000)));
+                var read = rig.Parameters.ReadAsync(Range, FieldProtocol.Openffb).Result;
+
+                Check.Equal(ParameterStatus.Timeout, read.Status, "still out of sync");
+                Check.Equal(1, rig.Board.CountLine(Range + "?"), "only the first read went out");
+            }
+        }
+
+        public static void Test_offb_sync_lines_are_repeated_and_never_taken_for_a_reply()
+        {
+            using (var rig = new Rig(o => o.ResyncRetryMs = 50))
+            {
+                rig.Board.SetValue(Range, "900");
+                rig.Board.ReplyDelayMs = 220;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "first read");
+
+                // Without an expected echo any bracket would do.
+                var second = rig.Send(Range + "?", ReplyMode.OffbEcho, 800);
+
+                Check.Equal("[axis.range?|900]", second.Result.Reply, "its own reply");
+                Check.True(rig.Board.WireLines.Count(IsOffbSync) >= 2, "repeated while no echo came back");
+            }
+        }
+
+        public static void Test_an_odrive_timeout_costs_offb_commands_nothing()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOdriveChannel = true;
+                Check.Equal(SerialOutcome.Timeout, rig.Send("r axis0.error", timeoutMs: 30).Result.Outcome, "ODrive read");
+                rig.Board.ClearLines();
+
+                rig.Board.SetValue(Range, "900");
+                Check.Equal("900", rig.Parameters.Read(Range, FieldProtocol.Openffb).Value, "the OpenFFBoard read");
+                Check.Lines(new[] { Range + "?" }, rig.Board.WireLines, "nothing else on the wire");
+            }
+        }
+
+        public static void Test_an_offb_timeout_costs_odrive_commands_nothing()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.MuteOffbChannel = true;
+                Check.Equal(SerialOutcome.Timeout, ShortRead(rig).Outcome, "OpenFFBoard read");
+                rig.Board.ClearLines();
+
+                Check.Equal("48.000", rig.Parameters.Read("vbus_voltage", FieldProtocol.Odrive).Value, "the ODrive read");
+                Check.Lines(new[] { "r vbus_voltage" }, rig.Board.WireLines, "nothing else on the wire");
+            }
+        }
+
+        public static void Test_late_offb_reply_after_a_cancel_cannot_answer_the_same_read()
+        {
+            using (var rig = new Rig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                rig.Board.SetValue(Range, "900");
+                rig.Board.ReplyDelayMs = 200;
+                var first = rig.Send(Range + "?", ReplyMode.OffbEcho, echo: "[" + Range + "?", cancellation: cancel.Token);
+                Check.True(Wait.Until(() => rig.Board.Lines.Length == 1), "the command should go out");
+                cancel.Cancel();
+                Check.Equal(SerialOutcome.Cancelled, first.Result.Outcome, "first read");
+
+                rig.Board.SetValue(Range, "1080");
+                rig.Board.ReplyDelayMs = 0;
+                Check.Equal("1080", rig.Parameters.Read(Range, FieldProtocol.Openffb).Value, "its own value");
+            }
+        }
+
+        public static void Test_late_offb_reply_after_a_stop_cannot_answer_the_same_read()
+        {
+            using (var rig = new Rig())
+            {
+                rig.HidState = 1;
+                rig.Board.SetValue(Range, "900");
+                rig.Board.MuteOdriveChannel = true;
+                rig.Board.ReplyDelayMs = 600;
+                var first = rig.Send(Range + "?", ReplyMode.OffbEcho, echo: "[" + Range + "?");
+                Check.True(Wait.Until(() => rig.Board.Lines.Length == 1), "the command should go out");
+                Check.True(rig.Service.RequestStop().WaitForResult(3000), "the stop should finish");
+                Check.Equal(SerialOutcome.Cancelled, first.Result.Outcome, "first read");
+
+                rig.Board.SetValue(Range, "1080");
+                rig.Board.ReplyDelayMs = 0;
+                Check.Equal("1080", rig.Parameters.Read(Range, FieldProtocol.Openffb).Value, "its own value");
+            }
+        }
+
+        private static void CheckBothChannelsSync(Rig rig)
+        {
+            rig.Board.SetValue(Range, "900");
+            rig.Board.ClearLines();
+            Check.Equal("900", rig.Parameters.Read(Range, FieldProtocol.Openffb).Value, "OpenFFBoard read");
+            Check.True(IsOffbSync(rig.Board.WireLines[0]), "first its sync: " + rig.Board.WireLines[0]);
+
+            rig.Board.ClearLines();
+            Check.Equal("48.000", rig.Parameters.Read("vbus_voltage", FieldProtocol.Odrive).Value, "ODrive read");
+            Check.True(IsOdriveSync(rig.Board.WireLines[0]), "first its sync: " + rig.Board.WireLines[0]);
+        }
+
+        public static void Test_both_channels_sync_after_a_partial_line()
+        {
+            using (var rig = new Rig(o => o.WriteTimeoutMs = 40))
+            {
+                rig.Board.StallWrites();
+                Check.Equal(SerialOutcome.Timeout, rig.Send("r axis0.error").Result.Outcome, "stalled write");
+                rig.Board.ReleaseWrites();
+                CheckBothChannelsSync(rig);
+            }
+        }
+
+        public static void Test_both_channels_sync_after_a_reconnect()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Board.FailNextWrite = true;
+                Check.Equal(SerialOutcome.TransportError, rig.Send("r axis0.error").Result.Outcome, "failed write");
+                Check.True(Wait.Until(() => rig.Service.GetStatus().ConnectGeneration == 2), "should reconnect");
+                CheckBothChannelsSync(rig);
+            }
+        }
+
+        public static void Test_both_channels_sync_after_a_release()
+        {
+            using (var rig = new Rig())
+            {
+                rig.Service.ReleasePort();
+                Check.True(Wait.Until(() => !rig.Board.IsOpen), "the port goes back");
+                rig.Service.AcquirePort();
+                rig.WaitConnected();
+                CheckBothChannelsSync(rig);
+            }
+        }
+
+        public static void Test_both_channels_sync_after_a_stop()
+        {
+            using (var rig = new Rig())
+            {
+                rig.HidState = 1;
+                Check.True(rig.Service.RequestStop().WaitForResult(3000), "the stop should finish");
+                CheckBothChannelsSync(rig);
+            }
+        }
+
+        public static void Test_offb_sync_line_is_read_only_in_the_firmware_syntax()
+        {
+            // The class doesn't exist, so parse_one runs no handler. tests/host/test_cmdparser_sync.cpp
+            // feeds the same line into the real parser, a change here has to show up there as well.
+            Check.Equal("odwsync.m1000000?", OdriveProtocol.OffbSyncRequest(1000000), "request");
+            Check.Equal("[odwsync.m1000000?|NOT_FOUND]", OdriveProtocol.OffbSyncEcho(1000000), "echo");
+            Check.True(!OdriveCommandGuard.IsBlockedWhileStopped(OdriveProtocol.OffbSyncRequest(1000000)), "allowed after a stop");
+
+            Check.True(OdriveProtocol.TryParseOffbSyncEcho("[odwsync.m1000001?|NOT_FOUND]", out uint marker), "recognised");
+            Check.Equal(1000001u, marker, "marker");
+            Check.True(!OdriveProtocol.TryParseOffbSyncEcho("[axis.range?|900]", out _), "a normal reply is not");
+            Check.True(!OdriveProtocol.TryParseOffbSyncEcho("[odwsync.m1000001?|900]", out _), "only the exact form");
+            Check.True(!OdriveProtocol.TryParseOffbSyncEcho("[odwsync.m?|NOT_FOUND]", out _), "without a number");
+            Check.True(!OdriveProtocol.TryParseOffbSyncEcho("invalid motor 1000001", out _), "nor the ODrive echo");
+            Check.True(!OdriveProtocol.TryParseSyncEcho("[odwsync.m1000001?|NOT_FOUND]", out _), "and the other way round");
         }
     }
 }
