@@ -15,6 +15,10 @@ vergleichen kannst. Danach wird er nicht mehr verwendet.
   Befehlswarteschlange ab, erkennt Trennen/Wiederverbinden und meldet Fehler.
   Button „Port freigeben“, damit Web-Client oder `dfu-util` übernehmen können.
   Der bestehende Profil-Service wird auf diesen Dienst umgestellt.
+  ODrive-Antworten tragen kein Echo. Nach einem Timeout, einem Abbruch oder einem stillen
+  Schreibbefehl sendet der Dienst deshalb `f <n>` mit einer Zahl oberhalb von `AXIS_COUNT`: Das
+  liest nichts und ändert nichts, die Firmware antwortet in Reihenfolge `invalid motor <n>`.
+  Erst nach diesem Echo nimmt er wieder Antworten ohne Kennzeichnung an.
 - **Parameter-Service:** ODrive-ASCII (`r`/`w`, `ss`, Fehler löschen, Zustand setzen)
   und OpenFFBoard-Befehle (`?`, `=`, `!`). Ein **Parameter-Katalog** als Datendatei
   (Pfad, Typ, Einheit, Min/Max, Gruppe/Tab, Beschreibung) wird aus den Tab-Definitionen

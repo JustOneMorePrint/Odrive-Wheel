@@ -36,9 +36,11 @@ Ein hängender Test scheitert nach 30 s an seinem Zeitlimit.
 |---|---|
 | `SerialServiceTests.cs` | Reihenfolge und Prioritäten, nur ein Befehl auf der Leitung, Zuordnung der Antworten, Timeouts, Abbruch, Verbindungsverlust, Wiederverbinden ohne Nachholen, Port freigeben und übernehmen |
 | `StopTests.cs` | Vorrang des Stopps, Verzögerung bei laufendem Warten und blockiertem Schreiben, Bestätigung, Stop-Sperre, Beenden des Dienstes |
+| `ResyncTests.cs` | Nichts Abgesagtes verlässt die Vorbereitung, gesendet und nicht gesendet bleiben unterscheidbar; verspätete Antworten erreichen nach Timeout oder Abbruch nie den nächsten Befehl, in beliebigem zeitlichem Abstand |
+| `StopDisplayTests.cs` | Grün nur, solange der Stopp gilt und die Achse jetzt IDLE meldet; Widerspruch, fehlende Rückmeldung, neue Verbindung, gelöschte Sperre |
 | `ParameterTests.cs` | Beide Befehlsdialekte, Ablehnungen, ungültige Eingaben, Parameter-Katalog, Statustexte |
 | `ProfileAndActionTests.cs` | Profil anwenden in exakt der bisherigen Zeilenfolge, Spielwechsel, Save to flash, Profildatei, Inc/Dec-Aktionen |
-| `WindowTests.cs` | Echtes WPF-Fenster auf eigenem Thread, Stop-Button per UI-Automation, modaler Dialog auf einem anderen Thread, Bereich „Extensions“ |
+| `WindowTests.cs` | Echtes WPF-Fenster auf eigenem Thread, Stop-Button per UI-Automation, modaler Dialog auf einem anderen Thread, Schließen während des Starts, Bereich „Extensions“ |
 
 ## Was hier nicht geprüft wird
 
@@ -52,4 +54,7 @@ beschreibt, kann die Attrappe nicht nachbilden.
 Eine `public static void Test_...`-Methode in einer `public static class` genügt, der Runner findet sie
 selbst. `Rig` liefert einen gestarteten Dienst auf einer Attrappe, `ProfileRig` zusätzlich den Profil-Dienst
 nach dem ersten Lesen. Auf Ereignisse wartet `Wait.Until`, nicht `Thread.Sleep`, damit die Tests auch auf
-einer ausgelasteten CI-Maschine stabil bleiben.
+einer ausgelasteten CI-Maschine stabil bleiben. Für einen exakten Zeitpunkt hält `WorkerHold` den Worker bei
+seinem nächsten Lese- oder Schreibzugriff an.
+
+`FakeBoard.Lines` enthält die Befehle, `FakeBoard.WireLines` zusätzlich die Sync-Zeilen `f <n>`.

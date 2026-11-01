@@ -183,12 +183,20 @@ commands are dropped and a running profile ends. You can also map it to a
 button (`SoftwareStop` under [Mappable actions](#mappable-actions)). The
 status line tells you what happened:
 
-- **IDLE confirmed** — the board or the HID stream reports IDLE.
-- **NOT CONFIRMED** — the command went out, but nothing reported IDLE.
-- **NOT DELIVERED** — the command never reached the board, for example
+- **IDLE confirmed** (green) — the stop still stands and the axis reports IDLE
+  right now. Green is never just a memory of an earlier success.
+- **Stop was confirmed, no current axis state** (amber) — it worked, but the HID
+  stream reports nothing at the moment, so the current state is unknown.
+- **The board reconnected since the stop** (amber) — it may have rebooted, and a
+  reboot can arm the motor again.
+- **AXIS IS NOT IDLE NOW** (red) — the HID stream contradicts the earlier stop.
+- **NOT CONFIRMED** (red) — the command went out, but nothing reported IDLE.
+- **NOT DELIVERED** (red) — the command never reached the board, for example
   because USB is gone or another application holds the port.
+- **Last software stop …** (gray) — you pressed **Clear stop**. This is history
+  and says nothing about the axis now.
 
-In the last two cases use the power cut-off.
+In the red cases use the power cut-off.
 
 **This is not a hardware E-stop.** It needs a working USB link and a
 responsive firmware. If SimHub is not running, it does nothing. IDLE only switches
@@ -606,6 +614,14 @@ Read the text next to the LED:
 - **held by another application** = usually the HTML tool: disconnect there.
   The plugin retries every second.
 - **released for other applications** = press **Take over port**.
+
+### A command fails with "the reply stream is out of sync"
+
+After a timeout the plugin asks the board with a harmless `f <n>` line where its
+reply stream stands, and sends nothing without an echo until the answer is back.
+The message means no answer came within a second, and the command was **not** sent.
+Commands in `class.property` form keep working, their replies identify themselves.
+If it stays that way, restart the board: the ODrive reply channel is stuck.
 
 ### Serial LED is green but Device config fields all show "—"
 
