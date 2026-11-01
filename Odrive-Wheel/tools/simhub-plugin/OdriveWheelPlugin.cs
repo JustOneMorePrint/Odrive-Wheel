@@ -16,7 +16,12 @@ namespace OdriveWheel.SimHubPlugin
         public OdrivePluginSettings Settings      { get; private set; }
         public OdriveTelemetrySnapshot Snapshot   { get; private set; }
         public OdriveProfileService   ProfileService { get; private set; }
-        public OdriveSerialCli        SerialCli   { get; private set; }
+
+        // [pkg1] The only owner of the COM port, and what talks through it.
+        public IOdriveSerialService   SerialService { get; private set; }
+        public IOdriveParameters      Parameters    { get; private set; }
+        public OdriveActionLogic      ActionLogic   { get; private set; }
+        public OdriveConfigWindowHost ConfigWindow  { get; private set; }
 
         private OdriveHidReader _reader;
         private string _lastSeenGame = "";
@@ -119,12 +124,25 @@ namespace OdriveWheel.SimHubPlugin
             Settings = this.ReadCommonSettings("Settings", () => new OdrivePluginSettings());
             Snapshot = new OdriveTelemetrySnapshot();
 
-            SerialCli      = new OdriveSerialCli(msg => SimHub.Logging.Current.Info("OdriveSerial: " + msg));
+            // [pkg1] Serial service, parameters and the configuration window.
+            Action<string> serialLog = msg => SimHub.Logging.Current.Info("OdriveSerial: " + msg);
+            Func<int?> hidAxisState = () => Snapshot.Connected ? (int?)Snapshot.AxisState : null;
+            SerialService = new OdriveSerialService(new SerialPortTransport(serialLog), new WmiPortLocator(),
+                                                    hidAxisState, log: serialLog);
+            Parameters = new OdriveParameterService(SerialService, serialLog);
+            SerialService.Start();
+            ConfigWindow = new OdriveConfigWindowHost(
+                () => new OdriveConfigWindow(SerialService, Parameters, OdriveParameterCatalog.LoadEmbedded(),
+                                             hidAxisState, serialLog),
+                serialLog);
+
             ProfileService = new OdriveProfileService(
-                SerialCli,
+                SerialService,
+                Parameters,
                 () => Settings,
                 msg => SimHub.Logging.Current.Info("OdriveProfile: " + msg));
             ProfileService.Start();
+            ActionLogic = new OdriveActionLogic(Parameters, ProfileService, msg => SimHub.Logging.Current.Info(msg));
 
             _reader = new OdriveHidReader(
                 Snapshot,
@@ -164,10 +182,13 @@ namespace OdriveWheel.SimHubPlugin
         public void End(PluginManager pluginManager)
         {
             SimHub.Logging.Current.Info("Odrive-Wheel plugin — End");
+            // [pkg1] Window first, it uses the services. The motor state stays as it is.
+            ConfigWindow?.Close(1000);
             _reader?.Stop();
             _reader = null;
             ProfileService?.Stop();
             ProfileService = null;
+            SerialService?.Shutdown(1000);
             this.SaveCommonSettings("Settings", Settings);
         }
 

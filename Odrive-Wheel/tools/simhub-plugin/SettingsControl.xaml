@@ -263,10 +263,25 @@
                         <TextBlock Text="Serial: " VerticalAlignment="Center"/>
                         <TextBlock x:Name="SerialStatusText" Text="waiting for device…" VerticalAlignment="Center"/>
                     </StackPanel>
+                    <!-- [pkg1] Configuration window, port release, software stop -->
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button Content="Open configuration window" Click="OnOpenConfigWindow"
+                                Style="{StaticResource SecondaryButton}"/>
+                        <Button x:Name="PortButton" Content="Release port" Click="OnTogglePort"
+                                Style="{StaticResource SecondaryButton}"/>
+                        <Button Content="SOFTWARE STOP (IDLE)" Click="OnSoftwareStop"
+                                Style="{StaticResource DangerButton}" FontWeight="SemiBold"/>
+                        <Button x:Name="ClearStopButton" Content="Clear stop" Click="OnClearStop"
+                                Visibility="Collapsed" Style="{StaticResource SecondaryButton}"/>
+                    </WrapPanel>
+                    <TextBlock x:Name="StopStatusText" Visibility="Collapsed" TextWrapping="Wrap"
+                               FontWeight="SemiBold" Margin="0,4,0,0"/>
                     <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0">
                         HID is the 1 kHz telemetry stream (games use this same channel — no conflict).
-                        Serial is used on demand to read/write config, and can conflict with the HTML tool
-                        if both try to open the COM port at the same time.
+                        The plugin holds the serial port while it runs, so that the software stop can always
+                        be sent. Release the port before using the HTML tool or dfu-util. The software stop
+                        is not a hardware E-stop: it needs a working USB link, and the motor coasts instead
+                        of braking.
                     </TextBlock>
                 </StackPanel>
             </Border>

@@ -4,13 +4,13 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace OdriveWheel.SimHubPlugin
 {
     /// <summary>
-    /// Owns the OdriveSerialCli instance and orchestrates:
-    ///   - initial bulk read of every profile field on startup
-    ///   - periodic refresh (every 10 s) so external changes propagate
+    /// Keeps the cache of profile values and orchestrates:
+    ///   - bulk read of every profile field after each connect
     ///   - applying a profile file (writes all fields + optional save-to-flash)
     ///   - auto-per-game selection (looks for &lt;GameName&gt;.json in the folder)
     ///
@@ -19,7 +19,8 @@ namespace OdriveWheel.SimHubPlugin
     /// </summary>
     public sealed class OdriveProfileService
     {
-        private readonly OdriveSerialCli    _cli;
+        private readonly IOdriveSerialService _serial;
+        private readonly IOdriveParameters    _parameters;
         private readonly Action<string>     _log;
         private readonly Func<OdrivePluginSettings> _getSettings;
 
@@ -28,16 +29,20 @@ namespace OdriveWheel.SimHubPlugin
 
         private Thread  _refreshThread;
         private volatile bool _running;
+        private readonly AutoResetEvent _refreshWake = new AutoResetEvent(false);
         private DateTime _lastRefreshUtc = DateTime.MinValue;
 
-        private string _lastAutoLoadedGame = "";
+        private volatile string _lastAutoLoadedGame = "";
+        private Task _autoApply = Task.CompletedTask;
 
         public OdriveProfileService(
-            OdriveSerialCli cli,
+            IOdriveSerialService serial,
+            IOdriveParameters parameters,
             Func<OdrivePluginSettings> getSettings,
             Action<string> log)
         {
-            _cli         = cli;
+            _serial      = serial;
+            _parameters  = parameters;
             _getSettings = getSettings;
             _log         = log ?? (_ => { });
         }
@@ -59,6 +64,7 @@ namespace OdriveWheel.SimHubPlugin
         public void Stop()
         {
             _running = false;
+            _refreshWake.Set();
             try { _refreshThread?.Join(500); } catch { }
             _refreshThread = null;
         }
@@ -90,50 +96,42 @@ namespace OdriveWheel.SimHubPlugin
             return ParseTyped(raw, f.Type);
         }
 
-        public bool IsConnected => _cli.IsDevicePresent();
+        public bool IsConnected => _serial.GetStatus().IsConnected;
 
         public DateTime LastRefreshUtc => _lastRefreshUtc;
 
-        public string CurrentPortName => _cli.CurrentPortName;
+        public string CurrentPortName => _serial.GetStatus().PortName;
+
+        /// <summary>The auto-per-game apply in progress, completed if there is none.</summary>
+        public Task PendingAutoApply => Volatile.Read(ref _autoApply);
 
         // ---- Bulk read ------------------------------------------------------
 
         /// <summary>Reads every field from the device once. Runs synchronously
         /// on the caller's thread. Skips fields that fail (logs, moves on).
-        /// Uses a single serial session so the port is held ONCE for a bounded
-        /// window rather than opened/closed per field.</summary>
+        /// A software stop ends it early.</summary>
         public int ReadAllOnce()
         {
-            if (!_cli.BeginSession())
+            if (!_serial.GetStatus().IsConnected)
             {
                 _log("ReadAll: could not open serial (device missing or busy)");
                 return 0;
             }
+            var stopToken = _serial.StopToken;
             int ok = 0;
-            try
+            foreach (var f in OdriveProfileFields.AllReadable)
             {
-                foreach (var f in OdriveProfileFields.AllReadable)
+                if (!_running || stopToken.IsCancellationRequested) break;
+                var read = _parameters.Read(f.Path, f.Protocol, CommandPriority.Batch, stopToken);
+                if (read.IsOk)
                 {
-                    if (!_running) break;
-                    string val = null;
-                    try
-                    {
-                        val = (f.Protocol == FieldProtocol.Openffb)
-                            ? _cli.ReadOffb(f.Path)
-                            : _cli.ReadOdrive(f.Path);
-                    }
-                    catch (Exception ex) { _log("ReadAll " + f.Path + ": " + ex.Message); }
-
-                    if (val != null)
-                    {
-                        _rawValues[f.Path] = val;
-                        ok++;
-                    }
+                    _rawValues[f.Path] = read.Value;
+                    ok++;
                 }
-            }
-            finally
-            {
-                _cli.EndSession();
+                else
+                {
+                    _log("ReadAll " + f.Path + ": " + read.Detail);
+                }
             }
             _lastRefreshUtc = DateTime.UtcNow;
             _log("ReadAll done — " + ok + "/" + CountReadable() + " fields");
@@ -154,76 +152,68 @@ namespace OdriveWheel.SimHubPlugin
             public int Ok   { get; internal set; }
             public int Fail { get; internal set; }
             public IList<string> Errors { get; } = new List<string>();
+            /// <summary>Not every field was attempted: no connection, or a software stop.</summary>
+            public bool Aborted { get; internal set; }
         }
 
         /// <summary>Writes every profile field to the device. Returns per-field
         /// success/failure counts. Does NOT save to flash — call SaveToFlash()
-        /// separately if you want persistence.</summary>
+        /// separately if you want persistence. A software stop ends it early.</summary>
         public ApplyResult ApplyProfile(OdriveProfileFile.LoadedProfile profile)
         {
             var r = new ApplyResult();
             if (profile == null) return r;
 
             _log("ApplyProfile '" + profile.Name + "' — start (" + profile.Values.Count + " values in file)");
-            if (!_cli.BeginSession())
+            if (!_serial.GetStatus().IsConnected)
             {
+                r.Aborted = true;
                 r.Errors.Add("serial: could not open port (device missing or busy)");
-                _log("ApplyProfile: session open failed");
+                _log("ApplyProfile: not connected");
                 return r;
             }
+            var stopToken = _serial.StopToken;
             int considered = 0, skipped = 0;
-            try
+
+            // Iterate in ProfileFields order (hardware-first) so dependent
+            // writes see settled state.
+            foreach (var f in OdriveProfileFields.All)
             {
-                // Iterate in ProfileFields order (hardware-first) so dependent
-                // writes see settled state.
-                foreach (var f in OdriveProfileFields.All)
+                if (!_running) break;
+                if (stopToken.IsCancellationRequested)
                 {
-                    if (!_running) break;
-                    if (!profile.Values.TryGetValue(f.Path, out var val))
-                    {
-                        skipped++;
-                        continue;
-                    }
-                    considered++;
-
-                    // Boolean paths in profiles may be "True"/"False" or "1"/"0".
-                    if (f.Type == FieldType.Boolean)
-                    {
-                        val = ParseBoolAsString(val);
-                    }
-
-                    bool ok = false;
-                    string errNote = null;
-                    try
-                    {
-                        ok = (f.Protocol == FieldProtocol.Openffb)
-                            ? _cli.WriteOffb(f.Path, val)
-                            : _cli.WriteOdrive(f.Path, val);
-                    }
-                    catch (Exception ex)
-                    {
-                        errNote = ex.Message;
-                    }
-
-                    if (ok)
-                    {
-                        r.Ok++;
-                        _rawValues[f.Path] = val;
-                        _log("  write ✓ " + f.Path + " = " + val);
-                    }
-                    else
-                    {
-                        r.Fail++;
-                        var line = "  write ✗ " + f.Path + " = " + val
-                                 + " (" + (errNote ?? "no ack / rejected") + ")";
-                        _log(line);
-                        r.Errors.Add(f.Path + ": " + (errNote ?? "no ack / rejected"));
-                    }
+                    r.Aborted = true;
+                    r.Errors.Add("aborted by the software stop");
+                    _log("ApplyProfile: aborted by the software stop");
+                    break;
                 }
-            }
-            finally
-            {
-                _cli.EndSession();
+                if (!profile.Values.TryGetValue(f.Path, out var val))
+                {
+                    skipped++;
+                    continue;
+                }
+                considered++;
+
+                // Boolean paths in profiles may be "True"/"False" or "1"/"0".
+                if (f.Type == FieldType.Boolean)
+                {
+                    val = ParseBoolAsString(val);
+                }
+
+                var write = _parameters.Write(f.Path, val, f.Protocol, CommandPriority.Batch, stopToken);
+                if (write.IsOk)
+                {
+                    r.Ok++;
+                    _rawValues[f.Path] = val;
+                    _log("  write ✓ " + f.Path + " = " + val);
+                }
+                else
+                {
+                    r.Fail++;
+                    var note = write.Detail ?? "no ack / rejected";
+                    _log("  write ✗ " + f.Path + " = " + val + " (" + note + ")");
+                    r.Errors.Add(f.Path + ": " + note);
+                }
             }
             _log("ApplyProfile '" + profile.Name + "' — done: "
                  + r.Ok + " ok, " + r.Fail + " fail, "
@@ -231,12 +221,17 @@ namespace OdriveWheel.SimHubPlugin
             return r;
         }
 
-        /// <summary>sys.save! (persists OpenFFBoard params) + ss (persists ODrive config, reboots).</summary>
-        public void SaveToFlash()
+        /// <summary>sys.save! (persists OpenFFBoard params) + ss (persists ODrive config, reboots).
+        /// Returns null if both went out, otherwise what failed. The firmware ignores ss
+        /// while the motor is armed and does not report that.</summary>
+        public string SaveToFlash()
         {
             _log("SaveToFlash: sys.save! + ss (device will reboot)");
-            _cli.ExecOffb("sys.save");
-            _cli.ODriveSave();
+            var save = _parameters.ExecOffb("sys.save");
+            var reboot = _parameters.SaveOdrive();
+            if (!save.IsOk)   return "sys.save!: " + save.Detail;
+            if (!reboot.IsOk) return "ss: " + reboot.Detail;
+            return null;
         }
 
         /// <summary>
@@ -276,8 +271,10 @@ namespace OdriveWheel.SimHubPlugin
 
         /// <summary>Called from the plugin's DataUpdate. If GameName changed and
         /// a matching &lt;GameName&gt;.json exists in the profiles folder AND
-        /// AutoLoadByGame is enabled, applies it. Idempotent per game — won't
-        /// re-apply the same game's profile back-to-back.</summary>
+        /// AutoLoadByGame is enabled, applies it in the background, so SimHub's
+        /// data thread never waits for the serial link. Idempotent per game — won't
+        /// re-apply the same game's profile back-to-back. Several game changes in a
+        /// row are applied in order.</summary>
         public void MaybeAutoLoadForGame(string gameName)
         {
             var s = _getSettings();
@@ -292,52 +289,64 @@ namespace OdriveWheel.SimHubPlugin
             var candidate = Path.Combine(s.ProfilesFolder, safe + ".json");
             if (!File.Exists(candidate)) return;
 
-            OdriveProfileFile.LoadedProfile p = null;
-            try { p = OdriveProfileFile.Load(candidate); }
-            catch (Exception ex) { _log("auto-load parse fail: " + ex.Message); return; }
-
-            _log("auto-load for game '" + gameName + "' → " + candidate);
-            var r = ApplyProfile(p);
-            if (s.SaveToFlashOnAutoLoad && r.Fail == 0)
-                SaveToFlash();
-
             _lastAutoLoadedGame = gameName;
+            var previous = Volatile.Read(ref _autoApply);
+            Volatile.Write(ref _autoApply, previous.ContinueWith(
+                _ => AutoApply(gameName, candidate, s), TaskScheduler.Default));
+        }
+
+        private void AutoApply(string gameName, string candidate, OdrivePluginSettings s)
+        {
+            try
+            {
+                OdriveProfileFile.LoadedProfile p;
+                try { p = OdriveProfileFile.Load(candidate); }
+                catch (Exception ex)
+                {
+                    _log("auto-load parse fail: " + ex.Message);
+                    if (_lastAutoLoadedGame == gameName) _lastAutoLoadedGame = "";
+                    return;
+                }
+
+                _log("auto-load for game '" + gameName + "' → " + candidate);
+                var r = ApplyProfile(p);
+                if (s.SaveToFlashOnAutoLoad && r.Fail == 0 && !r.Aborted)
+                {
+                    var error = SaveToFlash();
+                    if (error != null) _log("auto-load save failed: " + error);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log("auto-load failed: " + ex.Message);
+            }
         }
 
         // ---- Refresh loop ---------------------------------------------------
         //
         // The plugin owns every write to the device (inc/dec actions, profile
         // apply, save-to-flash). Its cache is authoritative — periodic
-        // polling would just re-read values it already knows, contending
-        // uselessly with the HTML tool. Instead:
+        // polling would just re-read values it already knows. Instead:
         //
-        //   - Read once on first connect
-        //   - Re-read on device reconnect (unplug → replug)
+        //   - Read after every connect, which also covers a reboot and unplug → replug
         //   - Otherwise trust the cache; the user can force a re-read from
         //     the settings panel if they've been tuning in the HTML tool
-        //
-        // The loop still runs at 2 Hz so device presence changes are detected
-        // quickly, but IsDevicePresent hits a 30 s WMI cache and is cheap.
         private void RefreshLoop()
         {
-            // Initial read as soon as the device is up.
-            Thread.Sleep(500);
-            bool wasConnected = _cli.IsDevicePresent();
-            if (wasConnected) ReadAllOnce();
-
+            int seenGeneration = 0;
             while (_running)
             {
-                // Sleep in short chunks so Stop() responds quickly.
-                for (int i = 0; i < 20 && _running; i++) Thread.Sleep(100);
-                if (!_running) return;
-
-                bool nowConnected = _cli.IsDevicePresent();
-                if (nowConnected && !wasConnected)
+                var status = _serial.GetStatus();
+                if (status.IsConnected && status.ConnectGeneration != seenGeneration)
                 {
-                    _log("device reappeared — re-reading all fields");
+                    seenGeneration = status.ConnectGeneration;
+                    // Let a board that has just rebooted settle.
+                    _refreshWake.WaitOne(500);
+                    if (!_running) return;
+                    _log("connected — reading all fields");
                     ReadAllOnce();
                 }
-                wasConnected = nowConnected;
+                _refreshWake.WaitOne(500);
             }
         }
 
