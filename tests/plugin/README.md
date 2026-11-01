@@ -36,7 +36,7 @@ Ein hängender Test scheitert nach 30 s an seinem Zeitlimit.
 |---|---|
 | `SerialServiceTests.cs` | Reihenfolge und Prioritäten, nur ein Befehl auf der Leitung, Zuordnung der Antworten, Timeouts, Abbruch, Verbindungsverlust, Wiederverbinden ohne Nachholen, Port freigeben und übernehmen |
 | `StopTests.cs` | Vorrang des Stopps, Verzögerung bei laufendem Warten und blockiertem Schreiben, Bestätigung, Stop-Sperre, Beenden des Dienstes |
-| `ResyncTests.cs` | Nichts Abgesagtes verlässt die Vorbereitung, gesendet und nicht gesendet bleiben unterscheidbar; verspätete Antworten erreichen nach Timeout oder Abbruch nie den nächsten Befehl, in beliebigem zeitlichem Abstand |
+| `ResyncTests.cs` | Nichts Abgesagtes verlässt die Vorbereitung, gesendet und nicht gesendet bleiben unterscheidbar, auch bei einem Abbruch zu jedem Zeitpunkt; verspätete Antworten erreichen nach Timeout oder Abbruch nie den nächsten Befehl, in beliebigem zeitlichem Abstand und auf beiden Antwortwegen, auch bei wiederholten Lese- und Schreibbefehlen desselben Pfads |
 | `StopDisplayTests.cs` | Grün nur, solange der Stopp gilt und die Achse jetzt IDLE meldet; Widerspruch, fehlende Rückmeldung, neue Verbindung, gelöschte Sperre |
 | `ParameterTests.cs` | Beide Befehlsdialekte, Ablehnungen, ungültige Eingaben, Parameter-Katalog, Statustexte |
 | `ProfileAndActionTests.cs` | Profil anwenden in exakt der bisherigen Zeilenfolge, Spielwechsel, Save to flash, Profildatei, Inc/Dec-Aktionen |
@@ -57,4 +57,6 @@ nach dem ersten Lesen. Auf Ereignisse wartet `Wait.Until`, nicht `Thread.Sleep`,
 einer ausgelasteten CI-Maschine stabil bleiben. Für einen exakten Zeitpunkt hält `WorkerHold` den Worker bei
 seinem nächsten Lese- oder Schreibzugriff an.
 
-`FakeBoard.Lines` enthält die Befehle, `FakeBoard.WireLines` zusätzlich die Sync-Zeilen `f <n>`.
+`FakeBoard.Lines` enthält die Befehle, `FakeBoard.WireLines` zusätzlich die Sync-Zeilen `f <n>` und
+`odwsync.m<n>?`. Die Attrappe beantwortet ODrive- und OpenFFBoard-Befehle wie die Firmware getrennt: Jeder
+Weg hält seine Reihenfolge, einer kann den anderen überholen.

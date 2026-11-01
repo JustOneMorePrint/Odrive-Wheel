@@ -617,11 +617,13 @@ Read the text next to the LED:
 
 ### A command fails with "the reply stream is out of sync"
 
-After a timeout the plugin asks the board with a harmless `f <n>` line where its
-reply stream stands, and sends nothing without an echo until the answer is back.
+The firmware answers `r`/`w` commands and `class.property` commands on two separate
+paths. After a timeout the plugin asks the board with a harmless line where the reply
+stream of that path stands (`f <n>` or `odwsync.m<n>?`), and sends nothing on that path
+until the answer is back, so that a late reply can't pass for the current one.
 The message means no answer came within a second, and the command was **not** sent.
-Commands in `class.property` form keep working, their replies identify themselves.
-If it stays that way, restart the board: the ODrive reply channel is stuck.
+The other path may well keep working. If it stays that way, restart the board: that
+reply channel is stuck.
 
 ### Serial LED is green but Device config fields all show "—"
 

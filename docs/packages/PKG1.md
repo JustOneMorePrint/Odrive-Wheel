@@ -15,10 +15,14 @@ vergleichen kannst. Danach wird er nicht mehr verwendet.
   Befehlswarteschlange ab, erkennt Trennen/Wiederverbinden und meldet Fehler.
   Button „Port freigeben“, damit Web-Client oder `dfu-util` übernehmen können.
   Der bestehende Profil-Service wird auf diesen Dienst umgestellt.
-  ODrive-Antworten tragen kein Echo. Nach einem Timeout, einem Abbruch oder einem stillen
-  Schreibbefehl sendet der Dienst deshalb `f <n>` mit einer Zahl oberhalb von `AXIS_COUNT`: Das
-  liest nichts und ändert nichts, die Firmware antwortet in Reihenfolge `invalid motor <n>`.
-  Erst nach diesem Echo nimmt er wieder Antworten ohne Kennzeichnung an.
+  ODrive-Antworten tragen kein Echo, und ein OpenFFBoard-Echo nennt nur den Pfad, nicht die
+  Anfrage. Beide Antwortwege laufen in der Firmware getrennt und können sich überholen. Nach
+  einem Timeout oder einem Abbruch synchronisiert der Dienst deshalb den Weg des nächsten
+  Befehls, jeweils mit einer eigenen Marke: `f <n>` mit einer Zahl oberhalb von `AXIS_COUNT`
+  liest und ändert nichts und wird mit `invalid motor <n>` beantwortet; `odwsync.m<n>?` ruft
+  keinen Handler auf und wird mit `[odwsync.m<n>?|NOT_FOUND]` beantwortet. Die Klasse `odwsync`
+  darf es in `cmd_table.cpp` deshalb nicht geben (`tests/host/test_cmdparser_sync.cpp`).
+  Ohne das Echo des eigenen Wegs geht kein Befehl auf diesem Weg hinaus.
 - **Parameter-Service:** ODrive-ASCII (`r`/`w`, `ss`, Fehler löschen, Zustand setzen)
   und OpenFFBoard-Befehle (`?`, `=`, `!`). Ein **Parameter-Katalog** als Datendatei
   (Pfad, Typ, Einheit, Min/Max, Gruppe/Tab, Beschreibung) wird aus den Tab-Definitionen
