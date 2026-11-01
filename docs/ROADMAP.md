@@ -22,7 +22,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 
 | Schritt | Inhalt | Status |
 |---|---|---|
-| 0 | Prozess-Setup | ☐ |
+| 0 | Prozess-Setup | ☑ |
 | 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ |
 | 2 | Plugin-Analyse | ☐ |
 | 3 | Achs-Pipeline, Schutz und 8 kHz | ☐ |
@@ -66,7 +66,7 @@ Kein Feature-Paket, sondern Vorbereitung. Ändert kein Fahrverhalten.
 
 | Feature | Vorteil | Änderung |
 |---|---|---|
-| Verbindung und ODrive-Parametereditor | Alle ODrive-Einstellungen in SimHub | Plugin: `OdriveSerialCli.cs` erweitert; neu Parameter-Service und Editor |
+| Verbindung und ODrive-Parametereditor | Alle ODrive-Einstellungen in SimHub | Plugin: `OdriveSerialCli.cs` ersetzt durch Verbindungsdienst und Parameter-Service; neu Editor |
 | Quick-Start-Assistent | Komplette Inbetriebnahme in SimHub | Plugin: neu Assistent |
 | KUKA-Setup: Kt-Wizard (Nm/A_rms ↔ Nm/A_peak, Ke in V/krpm), KTY84-Preset, Haltebremse über ODrive-GPIO-Modus `MECH_BRAKE` | Echte Nm, Temperaturschutz, Bremse schließt automatisch | Plugin; Hardware: MOSFET oder Relais |
 | Moment-Drehzahl-Rechner, Empfehlungen zu Strom-/PLL-Bandbreite (rad/s!) und Feedforward | Du weißt, ab welcher Lenkgeschwindigkeit das Moment einbricht | Plugin |

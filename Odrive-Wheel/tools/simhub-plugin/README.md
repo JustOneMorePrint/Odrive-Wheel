@@ -34,19 +34,21 @@ Properties published to SimHub under **Odrive-Wheel Telemetry**:
 | `BrakePowerAvgW`               | double | R · ⟨I²⟩ over 60 s (needs R_brake) |
 | `ClipOutPercent`               | double | Fraction where \|Iq\| ≥ 0.95 · lim over 30 s (needs current_lim) |
 
-No telemetry is fetched over the serial CLI channel — this plugin uses only
-what the firmware already broadcasts in the 1 kHz HID stream. Temperatures
-are not part of that stream and are therefore not exposed here.
+Telemetry comes from the 1 kHz HID stream. The serial CLI channel is for
+configuration: profile fields, profiles, mappable actions and the software stop.
+See `USER_MANUAL.md`.
 
 ## Building
 
 Requirements:
 
-- .NET Framework 4.8 SDK (installed by Visual Studio 2019/2022 or as a
-  standalone Developer Pack)
+- `dotnet` CLI (tested with .NET SDK 10) and access to nuget.org.
+  The .NET Framework 4.8 Developer Pack is optional, the SDK downloads the
+  reference assemblies otherwise.
 - SimHub installed at `C:\Program Files (x86)\SimHub` (or set the `SimHubPath`
   MSBuild property to your install location)
-- `dotnet` CLI (comes with any recent .NET SDK)
+
+Close SimHub first, it locks the DLL.
 
 ```bash
 dotnet restore
@@ -56,7 +58,9 @@ dotnet build -c Release
 The `AfterBuild` target copies `OdriveWheel.SimHubPlugin.dll` straight
 into your SimHub install directory (SimHub already ships `HidSharp.dll`,
 so we don't overwrite it). Restart SimHub and enable the plugin under
-**Settings → Plugins**.
+**Settings → Plugins**. The next start opens the COM port of a connected board.
+
+Tests run without SimHub and without a board, see `tests/plugin/README.md`.
 
 If SimHub is installed elsewhere:
 
@@ -73,18 +77,9 @@ SimHub install directory (next to `SimHubWPF.exe`). Restart SimHub.
 
 ## Configuration
 
-Open SimHub → left menu → **Odrive-Wheel**. Fill in:
-
-- **Half range (°)** — half of `axis.range` from the Odrive HTML configurator.
-  Default 450 (matches 900° total). Determines the scale of `WheelPositionDeg`.
-- **Phase resistance (Ω)** — motor phase resistance from motor calibration.
-  Enables `MotorCopperLossW`. Leave 0 to disable.
-- **Brake resistance (Ω)** — regen brake resistor value on the board
-  (typically 0.5 Ω). Enables `BrakePowerAvgW`. Leave 0 to disable.
-- **Current limit (A)** — `motor.current_lim` from the HTML tool. Enables
-  `ClipOutPercent`. Leave 0 to disable.
-
-Click **Save**. Settings persist to SimHub's `PluginsData` folder.
+Open SimHub → left menu → **Odrive-Wheel**. Range, phase resistance, brake
+resistance and current limit are read from the board over serial. Settings like
+the profiles folder persist to SimHub's `PluginsData` folder.
 
 ## Coexistence
 
@@ -94,8 +89,12 @@ Click **Save**. Settings persist to SimHub's `PluginsData` folder.
 - **The Odrive HTML configurator open at the same time**: works, as long as
   it isn't holding the HID device with `exclusive: true`. Overlay uses
   `inputreport` listeners like this plugin does, so both can coexist.
-- **The plugin serial-writing to the board**: never. This plugin is read-only.
-  For configuration, use the HTML tool.
+- **The serial port**: only one application can hold it, and the plugin holds it
+  while it runs, so that the software stop can go out at any moment. Press
+  **Release port** before you connect the HTML tool or start a flash from there.
+
+The software stop sets the axis to IDLE. It needs a working USB link and is
+**not a hardware E-stop**: keep the cut-off of the power supply within reach.
 
 ## Troubleshooting
 
@@ -107,8 +106,8 @@ Click **Save**. Settings persist to SimHub's `PluginsData` folder.
   be blocking the USB endpoint. Native HID Input Reports should always
   arrive at the polling interval (1 ms), but heavy USB bus contention on
   the same hub can slow it. Move the wheel to its own USB root port.
-- **`WheelPositionDeg` reads wrong**: your `HalfRangeDeg` doesn't match the
-  firmware's `axis.range` setting. Divide the HTML tool value by 2.
+- **`WheelPositionDeg` reads wrong**: the plugin has not read `axis.range` yet and
+  uses 900°. Check that the Serial LED is green and use **Refresh from device now**.
 
 ## License
 

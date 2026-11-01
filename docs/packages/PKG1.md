@@ -19,17 +19,24 @@ vergleichen kannst. Danach wird er nicht mehr verwendet.
   und OpenFFBoard-Befehle (`?`, `=`, `!`). Ein **Parameter-Katalog** als Datendatei
   (Pfad, Typ, Einheit, Min/Max, Gruppe/Tab, Beschreibung) wird aus den Tab-Definitionen
   und Tooltips des Web-Clients übernommen. Die Oberfläche wird daraus erzeugt.
-- **Bereich „Erweiterungen“:** Host für die Steuerelemente der Pakete 3–7
-  (Interface, z. B. `IFeaturePanel`). Ein Paket registriert sein Steuerelement mit
-  einer Zeile. Die Schalter dort sind global und nicht Teil der Profile.
-- **Not-Aus-Button** im Fenster, immer sichtbar: setzt die Achse sofort auf IDLE.
+  Min/Max gibt es im Web-Client nicht, sie werden von Hand gepflegt.
+- **Bereich „Extensions“:** Host für die Steuerelemente der Pakete 3–7
+  (`IFeaturePanel`). Ein Paket registriert sein Steuerelement mit
+  einer Zeile in `FeaturePanels`. Die Schalter dort sind global und nicht Teil der Profile.
+- **Software-Stopp „SOFTWARE STOP (IDLE)“** im Fenster, immer sichtbar, dazu im Panel und
+  als mappbare Aktion: setzt die Achse sofort auf IDLE und hat Vorrang vor allen wartenden
+  Befehlen. **Er ersetzt keinen Hardware-Not-Aus:** Er braucht eine funktionierende USB-
+  Verbindung, und der Motor läuft danach frei aus, statt zu bremsen.
 - **Oberflächensprache:** Englisch wie das bestehende Plugin; Doku auf Deutsch.
 
 ## Sicherheitsregeln für alle Aktionen, die den Motor bewegen
 
 - Bestätigungsdialog mit Checkliste (Hände weg, Lenkrad frei, Not-Aus in Reichweite).
+  Der Dialog gehört **nicht** als modales `ShowDialog` auf den Thread des Fensters: Das sperrt
+  alle Fenster dieses Threads und damit den Stop-Button (siehe `tests/plugin/WindowTests.cs`).
+  Die Bestätigung läuft deshalb im Fenster selbst.
 - Kalibrierungen laufen mit reduziertem Strom gemäß Quick-Start-Vorgaben des Web-Clients.
-- Während einer Bewegung ist der Not-Aus-Button hervorgehoben.
+- Während einer Bewegung ist der Stop-Button hervorgehoben.
 - Claude testet keine dieser Aktionen selbst an der Hardware.
 
 ## Teilschritte
@@ -39,7 +46,7 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 
 | Teilschritt | Inhalt | Test durch den Nutzer |
 |---|---|---|
-| **1a – Gerüst** | Konfigurationsfenster, Verbindungsdienst, Parameter-Service, Parameter-Katalog (Datenstruktur und erste Einträge), Not-Aus-Button, leerer Bereich „Erweiterungen“, Umstellung des Profil-Service | Fenster öffnet, verbindet, liest `vbus_voltage` und Fehler, Not-Aus setzt IDLE, Port freigeben/übernehmen mit dem Web-Client klappt, Profile funktionieren wie vorher |
+| **1a – Gerüst** | Konfigurationsfenster, Verbindungsdienst, Parameter-Service, Parameter-Katalog (Datenstruktur und erste Einträge), Software-Stopp, leerer Bereich „Extensions“, Umstellung des Profil-Service | Fenster öffnet, verbindet, liest `vbus_voltage` und Fehler, Software-Stopp setzt IDLE, Port freigeben/übernehmen mit dem Web-Client klappt, Profile funktionieren wie vorher |
 | **1b – ODrive-Editor** | Tabs PSU/Bremswiderstand, Achse, Motor, Encoder, Controller, Status/Fehler (mit Klartext-Decoder), Konsole; Speichern (`ss`), Fehler löschen, Config löschen mit Rückfrage; **Export/Import im gleichen JSON-Format wie der Web-Client** (flach, `"pfad": "wert"`), damit vorhandene Backups nutzbar bleiben | Gleiche Werte wie im Web-Client; Export aus dem Plugin lässt sich im Web-Client importieren und umgekehrt |
 | **1c – FFB-Einstellungen** | Tabs FFB Wheel, FFB Effects, FFB Filters inkl. 3-Band-EQ mit Kurve, Inputs/GPIO; Anbindung an das Profilsystem | Werte stimmen mit dem Web-Client überein; Profil anwenden/speichern wie bisher |
 | **1d – Quick-Start und Motor-Setup** | Assistent mit den 13 Schritten des Web-Clients; **Kt-Wizard**; **KTY84-Preset**; **Haltebremse**; **Moment-Drehzahl-Rechner**; Empfehlungen zu Strom-/PLL-Bandbreite und Feedforward | Kompletter Durchlauf mit dem XDrive Mini; Kt-Wizard-Ergebnis plausibel gegen Datenblatt |

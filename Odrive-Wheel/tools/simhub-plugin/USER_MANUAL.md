@@ -82,8 +82,10 @@ and mappable actions for dashboards and button-box control.
 
 ### Option B — Build from source
 
-Requires `dotnet` CLI (any recent .NET SDK) and .NET Framework 4.8
-Developer Pack.
+Requires the `dotnet` CLI (tested with .NET SDK 10) and access to nuget.org. The .NET Framework 4.8 Developer Pack is optional, the SDK downloads
+the reference assemblies otherwise.
+
+Close SimHub first, it locks the DLL.
 
 ```bash
 cd tools/simhub-plugin
@@ -157,11 +159,47 @@ Two rows: **HID** (the 1 kHz stream) and **Serial** (the config
 channel). Each has a coloured LED with a subtle glow:
 
 - **Green** — live and healthy
-- **Amber** — COM port not yet discovered by WMI (should resolve in ≤30 s)
-- **Gray** — no device / stale
+- **Amber** (Serial) — searching for the board, the port is held by another
+  application, or you released it. The text says which.
+- **Gray** (HID) — no device / stale
 
-The Serial row also shows the discovered COM port name (e.g., `COM7`)
-and how long ago the initial bulk read completed.
+The Serial row also shows the COM port name (e.g., `COM7`) and how long
+ago the last bulk read completed.
+
+Below the rows:
+
+- **Open configuration window** — the separate window with the status
+  values, the software stop and the Extensions tab. It runs on its own UI
+  thread, so a busy SimHub or a SimHub dialog does not block it.
+- **Release port / Take over port** — the plugin holds the COM port while
+  it runs. Release it before you connect the HTML tool or start a flash from
+  there. While released, profiles and actions report that the port is released.
+- **SOFTWARE STOP (IDLE)** — see below.
+
+### Software stop
+
+Sets the axis to IDLE, ahead of everything that is waiting: queued
+commands are dropped and a running profile ends. You can also map it to a
+button (`SoftwareStop` under [Mappable actions](#mappable-actions)). The
+status line tells you what happened:
+
+- **IDLE confirmed** — the board or the HID stream reports IDLE.
+- **NOT CONFIRMED** — the command went out, but nothing reported IDLE.
+- **NOT DELIVERED** — the command never reached the board, for example
+  because USB is gone or another application holds the port.
+
+In the last two cases use the power cut-off.
+
+**This is not a hardware E-stop.** It needs a working USB link and a
+responsive firmware. If SimHub is not running, it does nothing. IDLE only switches
+the drive off: the motor coasts and does not brake. While the board writes to
+flash, the stop waits until that is done, about 1–2 s at worst. Always keep the
+cut-off of the power supply within reach.
+
+After a stop the plugin refuses everything that could start the motor again
+until you press **Clear stop**: `ss` and reboots (a reboot arms the motor again
+if `startup_closed_loop_control` is set), motion commands and other axis states.
+This covers the plugin only. The HTML tool or CAN can still arm the motor.
 
 ### LIVE READINGS · HID
 
@@ -233,7 +271,7 @@ The status line below the buttons shows the last write result:
 ### Refresh from device now
 
 Only useful if you edited values in the HTML tool while the plugin was
-running. Re-reads every field over serial in a single ~1 s port session.
+running. Re-reads every field over serial, which takes about a second.
 Not needed for normal operation — the cache stays authoritative on its
 own because the plugin is the sole writer.
 
@@ -418,6 +456,12 @@ Bind these in SimHub → **Controls and events** → **Additional plugins** →
 |---|---|
 | `ZeroWheelPosition` | Captures the current wheel position and applies it as the new center. Uses the firmware-native `axis.zeroenc!` command. Instant. Essential for incremental encoders without a Z index. |
 
+### Software stop
+
+| Action | Description |
+|---|---|
+| `SoftwareStop` | Sets the axis to IDLE ahead of everything else, see [Software stop](#software-stop). Not a hardware E-stop. |
+
 ### Increment / decrement (5 properties × 4 variants each)
 
 Each of the 5 live-tunable properties has a **fine** step (single-tap
@@ -495,6 +539,12 @@ If you only edited FFB/EQ parameters (not motor calibration), the
 reboot is technically unnecessary — but the plugin runs both for
 simplicity and matches what the HTML tool's unified Save button does.
 
+**Known limit:** the firmware ignores `ss` while the motor is armed and does
+not report that. The button then shows "saved", but only the FFB parameters
+were persisted. The ODrive editor will handle this properly; until then set
+the axis to IDLE first if you changed ODrive values. After a
+[software stop](#software-stop), `ss` is refused until you press **Clear stop**.
+
 ---
 
 ## Auto-per-game
@@ -544,16 +594,18 @@ if you're not sure a file was found.
 - Another app has the device in exclusive mode (rare — DirectInput
   games don't exclusive-lock the FFB device).
 
-### Serial LED stays gray or amber
+### Serial LED stays amber
 
-- Amber = WMI didn't discover a COM port matching VID 1209 / PID 0D40.
-  Windows sometimes takes 5–30 s to enumerate a new device.
-- Gray = the plugin tried to open the port but failed. Most common
-  causes:
-  - **HTML tool is holding the port**: close the connect there first.
-  - **Wrong driver**: the device should appear as a USB Serial Device
-    (COMx) under Ports in Device Manager. If it's under HID or
-    "Other devices", reinstall the ODrive USB driver.
+Read the text next to the LED:
+
+- **searching for the board** = WMI didn't discover a COM port matching
+  VID 1209 / PID 0D40. Windows sometimes takes 5–30 s to enumerate a new
+  device. **Wrong driver**: the device should appear as a USB Serial Device
+  (COMx) under Ports in Device Manager. If it's under HID or "Other devices",
+  reinstall the ODrive USB driver.
+- **held by another application** = usually the HTML tool: disconnect there.
+  The plugin retries every second.
+- **released for other applications** = press **Take over port**.
 
 ### Serial LED is green but Device config fields all show "—"
 
@@ -588,12 +640,6 @@ if you're not sure a file was found.
   the game name has emoji or unusual characters, rename the file to
   what the plugin would sanitise it to.
 
-### Plugin panel freezes for ~1 s occasionally
-
-- That's a serial bulk read after a device reconnect. The refresh
-  thread opens the port, reads all 33 fields, closes. HID telemetry
-  is on a different thread and keeps flowing.
-
 ### Live readings show but AxisError never has a value
 
 - The board is on firmware v1.2 or older, which doesn't include the
@@ -604,7 +650,8 @@ if you're not sure a file was found.
 
 ## Coexistence with the HTML tool
 
-Both tools can be open at the same time, with these caveats:
+Both tools can be open at the same time, but only one can use the serial
+port:
 
 ### HID (1 kHz telemetry)
 
@@ -615,13 +662,16 @@ Both tools can be open at the same time, with these caveats:
 ### Serial (config CLI)
 
 - The COM port is **single-owner**. Only one app can hold it at a time.
-- The plugin opens serial **on demand only** — during the initial bulk
-  read (~1 s after connect), during **Refresh from device**, during
-  **Apply profile**, and during **Save to flash**. Otherwise the port
-  is free.
-- If the HTML tool is holding the port when the plugin tries to open,
-  the plugin logs "port busy" and skips silently. Close the HTML
-  connection to give the plugin its window.
+- The plugin **holds the port while it runs**, so that the software stop can
+  go out at any moment. Press **Release port** in the panel or the configuration
+  window before you connect the HTML tool, and **Take over port** afterwards.
+- While released, the plugin leaves the port alone. Only a software stop still
+  tries to open it for a moment; if the HTML tool holds it, the stop reports
+  NOT DELIVERED.
+- If the HTML tool already holds the port when SimHub starts, the plugin shows
+  that and connects as soon as the port is free.
+- SimHub's data thread never waits for the serial link. Per-game profiles
+  are applied in the background.
 
 ### Recommended workflow
 
