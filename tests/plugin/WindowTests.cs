@@ -216,6 +216,80 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        private static OdriveConfigWindowHost HostWithHeldFactory(Rig rig, ManualResetEventSlim inFactory, ManualResetEventSlim release,
+                                                                  Action<OdriveConfigWindow> created)
+        {
+            return new OdriveConfigWindowHost(() =>
+            {
+                inFactory.Set();
+                release.Wait();
+                var window = new OdriveConfigWindow(rig.Service, rig.Parameters, OdriveParameterCatalog.LoadEmbedded(),
+                                                    () => rig.HidState, _ => { });
+                created(window);
+                return window;
+            }, m => Console.WriteLine("host: " + m));
+        }
+
+        public static void Test_close_during_window_creation_is_not_lost()
+        {
+            using (var rig = new Rig())
+            {
+                var inFactory = new ManualResetEventSlim(false);
+                var release = new ManualResetEventSlim(false);
+                OdriveConfigWindow window = null;
+                int loaded = 0;
+                var host = HostWithHeldFactory(rig, inFactory, release, w =>
+                {
+                    window = w;
+                    w.Loaded += (s, e) => Interlocked.Increment(ref loaded);
+                });
+
+                host.Show();
+                Check.True(inFactory.Wait(5000), "the factory should be running");
+
+                // The window doesn't exist yet, so all Close can do is leave a note.
+                host.Close(30);
+                release.Set();
+
+                Check.True(Wait.Until(() => !host.IsOpen, 5000), "the thread should end by itself");
+                Check.True(window != null, "the factory did finish");
+                Check.True(window != null && window.Dispatcher.HasShutdownFinished, "no dispatcher keeps running");
+                Check.Equal(0, Volatile.Read(ref loaded), "the window never showed");
+                host.Close(2000);
+            }
+        }
+
+        public static void Test_close_right_after_show_leaves_nothing_running()
+        {
+            using (var rig = new Rig())
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    var host = new OdriveConfigWindowHost(
+                        () => new OdriveConfigWindow(rig.Service, rig.Parameters, OdriveParameterCatalog.LoadEmbedded(), () => rig.HidState, _ => { }),
+                        m => Console.WriteLine("host: " + m));
+                    host.Show();
+                    host.Close(3000);
+                    Check.True(Wait.Until(() => !host.IsOpen, 3000), "round " + i + ": the thread should end");
+                    host.Close(2000);
+                }
+            }
+        }
+
+        public static void Test_show_after_close_opens_again()
+        {
+            using (var rig = new WindowRig())
+            {
+                rig.Host.Close(3000);
+                Check.True(!rig.Host.IsOpen, "closed");
+
+                rig.Host.Show();
+                Check.True(Wait.Until(() => rig.Created == 2), "a new window");
+                Check.True(rig.Host.WaitUntilShown(5000), "shown again");
+                Check.True(rig.Host.IsOpen, "open");
+            }
+        }
+
         public static void Test_extensions_tab_is_empty_without_packages()
         {
             using (var rig = new WindowRig())

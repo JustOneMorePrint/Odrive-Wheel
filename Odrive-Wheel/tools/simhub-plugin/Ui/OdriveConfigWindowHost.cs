@@ -17,7 +17,10 @@ namespace OdriveWheel.SimHubPlugin
         private readonly object _gate = new object();
         private readonly ManualResetEventSlim _shown = new ManualResetEventSlim(false);
 
+        // All three change under _gate. A close request stays here until the window's
+        // thread has seen it, it can arrive before there is anything to close.
         private Thread _thread;
+        private bool _closeRequested;
         private volatile Dispatcher _dispatcher;
         private volatile OdriveConfigWindow _window;
 
@@ -40,6 +43,7 @@ namespace OdriveWheel.SimHubPlugin
                 }
 
                 _shown.Reset();
+                _closeRequested = false;
                 _thread = new Thread(RunWindow)
                 {
                     IsBackground = true,
@@ -72,19 +76,25 @@ namespace OdriveWheel.SimHubPlugin
         public void Close(int timeoutMs)
         {
             Thread thread;
-            lock (_gate) thread = _thread;
-            if (thread == null || !thread.IsAlive) return;
+            Dispatcher dispatcher;
+            lock (_gate)
+            {
+                thread = _thread;
+                if (thread == null || !thread.IsAlive) return;
+                _closeRequested = true;
+                dispatcher = _dispatcher;
+            }
 
-            _dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
+            dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
             if (!thread.Join(timeoutMs)) _log("config window thread did not stop within " + timeoutMs + " ms");
         }
 
         private void RunWindow()
         {
             // An exception leaving this thread would end SimHub, its handlers don't see it.
+            var dispatcher = Dispatcher.CurrentDispatcher;
             try
             {
-                var dispatcher = Dispatcher.CurrentDispatcher;
                 dispatcher.UnhandledException += (s, e) =>
                 {
                     _log("config window error: " + e.Exception);
@@ -93,11 +103,27 @@ namespace OdriveWheel.SimHubPlugin
                 SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(dispatcher));
 
                 var window = _createWindow();
+
+                // From here on Close reaches the dispatcher. Before that it can only leave its
+                // note, which ends here. A shutdown queued after this point runs in Dispatcher.Run.
+                bool closeRequested;
+                lock (_gate)
+                {
+                    closeRequested = _closeRequested;
+                    if (!closeRequested)
+                    {
+                        _window = window;
+                        _dispatcher = dispatcher;
+                    }
+                }
+                if (closeRequested)
+                {
+                    window.Close();
+                    return;
+                }
+
                 window.Closed += (s, e) => dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
                 window.Show();
-
-                _window = window;
-                _dispatcher = dispatcher;
                 _shown.Set();
 
                 Dispatcher.Run();
@@ -108,8 +134,13 @@ namespace OdriveWheel.SimHubPlugin
             }
             finally
             {
-                _dispatcher = null;
-                _window = null;
+                lock (_gate)
+                {
+                    _dispatcher = null;
+                    _window = null;
+                }
+                // A window that was created but never ran still needs its dispatcher ended.
+                dispatcher.InvokeShutdown();
             }
         }
 
