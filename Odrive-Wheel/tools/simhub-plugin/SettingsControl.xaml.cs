@@ -680,7 +680,7 @@ namespace OdriveWheel.SimHubPlugin
             PortButton.Content = status.State == SerialConnectionState.Released ? "Take over port" : "Release port";
 
             int? hidState = snap.Connected ? (int?)snap.AxisState : null;
-            var stop = OdriveStatusText.Stop(status.LastStop, status.StopLatched, hidState);
+            var stop = OdriveStatusText.Stop(status, hidState);
             StopStatusText.Text = stop.Text;
             StopStatusText.Foreground = stop.Severity == StatusSeverity.Danger ? BrushDanger
                                       : stop.Severity == StatusSeverity.Warning ? BrushWarn

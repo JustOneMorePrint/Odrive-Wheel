@@ -83,6 +83,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 rig.Host.Invoke(w => Click(w.StopButton));
 
                 Check.True(Wait.Until(() => rig.Rig.Board.Value("axis0.current_state") == "1"), "the board goes to IDLE");
+                Check.True(Wait.Until(() => rig.Rig.Service.GetStatus().LastStop.IsFinished), "the stop should finish");
+                Check.True(!rig.On(w => w.StopStatusText.Text).Contains("IDLE confirmed"), "not while HID still says closed loop");
+
+                rig.Rig.HidState = 1;
                 Check.True(Wait.Until(() => rig.On(w => w.StopStatusText.Text).Contains("IDLE confirmed")), "result text");
                 Check.Equal(Visibility.Visible, rig.On(w => w.ClearStopButton.Visibility), "clear button appears");
 

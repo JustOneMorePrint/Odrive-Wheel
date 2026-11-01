@@ -30,6 +30,7 @@ namespace OdriveWheel.SimHubPlugin
           + "instead of braking. Keep the power cut-off within reach.";
 
         private const int StopOverdueMs = 500;
+        private const int AxisStateUndefined = 0;
         private const int AxisStateIdle = 1;
 
         public static StatusLine Connection(SerialStatus status)
@@ -52,13 +53,30 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
+        public static StatusLine Stop(SerialStatus status, int? hidAxisState)
+        {
+            var ticket = status.LastStop;
+            bool sameConnection = ticket == null || ticket.ConnectGeneration == status.ConnectGeneration;
+            return Stop(ticket, status.StopLatched, hidAxisState, sameConnection);
+        }
+
+        /// <summary>
+        /// What a finished stop achieved belongs to its moment, what the axis does now can have
+        /// changed since. Green means both: the stop still stands, and the axis is IDLE now.
+        /// </summary>
+        /// <param name="latched">False once the stop has been cleared: it is history then.</param>
         /// <param name="hidAxisState">Current axis state from the HID stream, null without fresh reports.</param>
-        public static StatusLine Stop(StopTicket ticket, bool latched, int? hidAxisState)
+        /// <param name="sameConnection">False if the port has been reconnected since the stop.
+        /// The board may have rebooted, which can arm the motor again.</param>
+        public static StatusLine Stop(StopTicket ticket, bool latched, int? hidAxisState, bool sameConnection = true)
         {
             if (ticket == null)
                 return new StatusLine(latched ? "Commands that can start the motor are blocked." : "", StatusSeverity.Neutral);
 
-            bool hidIdle = hidAxisState == AxisStateIdle;
+            // State 0 is a firmware without the field or a board still booting: no information.
+            int? axisNow = hidAxisState == AxisStateUndefined ? null : hidAxisState;
+            bool idleNow = axisNow == AxisStateIdle;
+
             switch (ticket.State)
             {
                 case StopState.Requested:
@@ -67,22 +85,48 @@ namespace OdriveWheel.SimHubPlugin
                         : new StatusLine("Stop requested…", StatusSeverity.Warning);
 
                 case StopState.Written:
-                    return ticket.AgeMs > StopOverdueMs && !hidIdle
+                    return ticket.AgeMs > StopOverdueMs && !idleNow
                         ? new StatusLine("Stop sent, IDLE NOT CONFIRMED after " + Ms(ticket.AgeMs) + ". Use the power cut-off.", StatusSeverity.Danger)
                         : new StatusLine("Stop sent, checking…", StatusSeverity.Warning);
+            }
 
+            if (!latched)
+                return new StatusLine("Last software stop " + PastOutcome(ticket) + ", cleared since. Says nothing about the axis now.", StatusSeverity.Neutral);
+
+            switch (ticket.State)
+            {
                 case StopState.Confirmed:
-                    return new StatusLine("IDLE confirmed: " + ticket.Detail + " (sent after " + Ms(ticket.WrittenAfterMs) + ").", StatusSeverity.Ok);
+                    if (axisNow.HasValue && !idleNow)
+                        return new StatusLine("AXIS IS NOT IDLE NOW: HID reports " + OdriveErrorDecoder.DecodeAxisState(axisNow.Value)
+                                            + ". The earlier stop no longer holds. Use the power cut-off if this is not intended.", StatusSeverity.Danger);
+                    if (!sameConnection)
+                        return new StatusLine("The board reconnected since the stop, it may have rebooted and armed the motor. "
+                                            + (idleNow ? "HID reports IDLE at the moment." : "There is no current axis state."), StatusSeverity.Warning);
+                    return idleNow
+                        ? new StatusLine("IDLE confirmed: " + ticket.Detail + " (sent after " + Ms(ticket.WrittenAfterMs) + ").", StatusSeverity.Ok)
+                        : new StatusLine("Stop was confirmed (" + ticket.Detail + "), but there is no current axis state from HID.", StatusSeverity.Warning);
 
                 case StopState.Unconfirmed:
-                    return hidIdle
+                    if (idleNow && !sameConnection)
+                        return new StatusLine("The board reconnected since the stop. HID reports IDLE at the moment.", StatusSeverity.Warning);
+                    return idleNow
                         ? new StatusLine("IDLE confirmed: HID reports IDLE, serial read-back failed.", StatusSeverity.Ok)
                         : new StatusLine("STOP SENT BUT IDLE NOT CONFIRMED: " + ticket.Detail + ". Use the power cut-off.", StatusSeverity.Danger);
 
                 default:
-                    return hidIdle
+                    return idleNow
                         ? new StatusLine("Stop not delivered (" + ticket.Detail + "), but HID reports IDLE.", StatusSeverity.Warning)
                         : new StatusLine("STOP NOT DELIVERED: " + ticket.Detail + ". Use the power cut-off.", StatusSeverity.Danger);
+            }
+        }
+
+        private static string PastOutcome(StopTicket ticket)
+        {
+            switch (ticket.State)
+            {
+                case StopState.Confirmed:   return "was confirmed";
+                case StopState.Unconfirmed: return "was sent but not confirmed";
+                default:                    return "was not delivered";
             }
         }
 

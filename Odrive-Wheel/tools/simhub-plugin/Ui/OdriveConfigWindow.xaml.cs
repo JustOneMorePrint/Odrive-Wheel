@@ -110,7 +110,7 @@ namespace OdriveWheel.SimHubPlugin
                 ? "Axis state (HID): " + OdriveErrorDecoder.DecodeAxisState(hidState.Value)
                 : "Axis state (HID): no reports";
 
-            var stop = OdriveStatusText.Stop(status.LastStop, status.StopLatched, hidState);
+            var stop = OdriveStatusText.Stop(status, hidState);
             StopStatusText.Text       = stop.Text;
             StopStatusText.Foreground = TextBrush(stop.Severity);
             ClearStopButton.Visibility = status.StopLatched ? Visibility.Visible : Visibility.Collapsed;
