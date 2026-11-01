@@ -77,12 +77,56 @@ deutlich unter ca. 100 Hz liegt; Empfehlung, R/L-Feedforward zu aktivieren.
 
 ## Details zu 1e
 
-- Geschützt (weder löschen noch beschreiben): S1+S2 (FFB-EEPROM), S9 (reserviert
-  für Paket 6), S10+S11 (ODrive-NVM). Reicht eine `.bin` in einen geschützten Sektor,
-  bricht der Flasher mit Fehlermeldung ab.
+**Geschützte Bereiche** (weder löschen noch beschreiben):
+
+| Sektoren | Adressbereich | Inhalt |
+|---|---|---|
+| S1+S2 | `0x08004000–0x0800BFFF` | FFB-EEPROM |
+| S9 | `0x080A0000–0x080BFFFF` | reserviert für Paket 6 |
+| S10+S11 | `0x080C0000–0x080FFFFF` | ODrive-NVM |
+
+**Reguläre `.bin` überdecken S1+S2:** Eine `.bin` ist ein zusammenhängendes Abbild ab
+`0x08000000`. Die Vektoren liegen in S0, der Code beginnt in S3, und der Build füllt die
+Lücke dazwischen mit `0xFF` (`objcopy --gap-fill=0xFF`). Jede reguläre Firmware-`.bin`
+reicht deshalb rechnerisch über S1+S2. Ihre Gesamtausdehnung ist **kein** Ablehnungsgrund.
+Entscheidend ist der Inhalt.
+
+**Prüfung vor dem ersten Lösch- oder Schreibzugriff:** Der Flasher prüft das ganze Abbild,
+bevor er das Board anfasst. Schlägt eine Prüfung fehl, bleibt das Board unverändert.
+
+| Fall | Reaktion |
+|---|---|
+| Alle Bytes des Abbilds in einem geschützten Bereich sind `0xFF` | Padding: Bereich beim Löschen und Schreiben überspringen |
+| Mindestens ein Byte in einem geschützten Bereich ist nicht `0xFF` | Echte Nutzdaten: abbrechen, Fehlermeldung nennt Sektor und Adresse des ersten solchen Bytes |
+| Abbild reicht über das Flash-Ende `0x08100000` hinaus | Abbrechen |
+| Abbild ist leer oder S0 enthält keine Nutzdaten | Abbrechen |
+
+**Lösch- und Schreibplan:**
+
+- Der Flasher zerlegt das Abbild in Segmente außerhalb der geschützten Bereiche. Bei
+  einer regulären `.bin` sind das S0 und der Abschnitt ab S3 bis zum letzten Sektor mit
+  Nutzdaten. Rein aus `0xFF` bestehendes Ende des Abbilds wird nicht geschrieben.
+- Gelöscht werden nur Sektoren, die ein Segment berührt. Ein Segment endet spätestens an
+  der Grenze zum nächsten geschützten Bereich, da Sektoren nur als Ganzes löschbar sind.
+- Die Segmente werden in getrennten Schreibvorgängen geflasht. Das gesamte Abbild am
+  Stück zu schreiben (`dfu-util -s 0x08000000:leave -D ...`) ist für den Flasher
+  ausgeschlossen, weil es dabei auch S1+S2 löscht.
+- Das Springen in die Firmware (`:leave`) erfolgt erst nach dem letzten Segment.
+
+**Pflicht-Testfälle (ohne Board prüfbar, gegen die Planungslogik):**
+
+- Reguläre CI-`.bin`: wird angenommen, Plan enthält S0 und ab S3, nichts aus den
+  geschützten Bereichen.
+- Reguläre `.bin` mit einem einzelnen Byte ungleich `0xFF` in S1, S2, S9, S10 oder S11:
+  wird abgelehnt, Plan bleibt leer.
+- `.bin` mit reinem `0xFF`-Padding über S9 hinaus und ohne Nutzdaten dort: wird
+  angenommen, S9–S11 bleiben unberührt.
+- Abbild über `0x08100000` hinaus: wird abgelehnt.
+
+**Weitere Punkte:**
+
 - Bootloader-Sprung über den vorhandenen ODrive-ASCII-Befehl wie im Web-Client.
-- Umsetzung bevorzugt mit mitgeliefertem `dfu-util` und getrennten Schreibvorgängen
-  für S0 und ab S3 (keine eigene USB-Implementierung). Lizenzhinweis (GPL-2.0) und
-  Quellenlink beilegen.
+- Umsetzung bevorzugt mit mitgeliefertem `dfu-util` (keine eigene USB-Implementierung).
+  Lizenzhinweis (GPL-2.0) und Quellenlink beilegen.
 - Einmalig weiterhin nötig: WinUSB-Treiber für `0483:df11` (Zadig), wie beim Web-Client.
 - CI: Workflow, der bei einem Tag `v*` ein GitHub-Release mit `.bin` und `.hex` erstellt.
