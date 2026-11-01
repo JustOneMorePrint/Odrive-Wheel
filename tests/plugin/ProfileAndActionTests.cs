@@ -18,14 +18,14 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public FakeBoard Board => Rig.Board;
         public string Folder { get; }
 
-        public ProfileRig(Action<FakeBoard> prepare = null)
+        public ProfileRig(Action<FakeBoard> prepare = null, Func<Rig, IOdriveParameters> parameters = null)
         {
             Rig = new Rig(prepare: prepare);
             Folder = Path.Combine(Path.GetTempPath(), "odw-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Folder);
             Settings.ProfilesFolder = Folder;
 
-            Profiles = new OdriveProfileService(Rig.Service, Rig.Parameters, () => Settings, _ => { });
+            Profiles = new OdriveProfileService(Rig.Service, parameters?.Invoke(Rig) ?? Rig.Parameters, () => Settings, _ => { });
             Profiles.Start();
             var last = "r config.brake_resistance";
             Check.True(Wait.Until(() => Board.CountLine(last) > 0 && Profiles.LastRefreshUtc != DateTime.MinValue, 5000),
@@ -333,6 +333,61 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 rig.Profiles.PendingAutoApply.Wait(1000);
 
                 Check.Equal(0, rig.Board.Lines.Length, "nothing sent");
+            }
+        }
+
+        /// <summary>Presses the stop right after a write has succeeded, between two lines of a
+        /// profile. A stop during a line is the easy case, that line fails and nothing saves.</summary>
+        private sealed class StopBetweenLines : IOdriveParameters
+        {
+            private readonly Rig _rig;
+            private int _writesLeft;
+
+            public StopBetweenLines(Rig rig, int writes)
+            {
+                _rig = rig;
+                _writesLeft = writes;
+            }
+
+            public ParameterResult Write(string path, string value, FieldProtocol protocol,
+                                         CommandPriority priority = CommandPriority.Interactive,
+                                         CancellationToken cancellation = default)
+            {
+                var result = _rig.Parameters.Write(path, value, protocol, priority, cancellation);
+                if (--_writesLeft == 0) _rig.Service.RequestStop().WaitForResult(3000);
+                return result;
+            }
+
+            public ParameterResult Read(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => _rig.Parameters.Read(path, protocol, priority, cancellation);
+            public ParameterResult ExecOffb(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => _rig.Parameters.ExecOffb(path, priority, cancellation);
+            public ParameterResult SaveOdrive() => _rig.Parameters.SaveOdrive();
+            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => _rig.Parameters.ReadAsync(path, protocol, priority, cancellation);
+            public Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => _rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation);
+            public Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => _rig.Parameters.ExecOffbAsync(path, priority, cancellation);
+            public Task<ParameterResult> SaveOdriveAsync() => _rig.Parameters.SaveOdriveAsync();
+        }
+
+        public static void Test_stop_between_two_lines_of_an_auto_apply_saves_nothing()
+        {
+            using (var rig = new ProfileRig(parameters: r => new StopBetweenLines(r, writes: 4)))
+            {
+                rig.Settings.AutoLoadByGame = true;
+                rig.Settings.SaveToFlashOnAutoLoad = true;
+                rig.Board.SetValue("sys.save", "x");
+                var values = OdriveProfileFields.All.ToDictionary(f => f.Path, f => "1");
+                OdriveProfileFile.Save(Path.Combine(rig.Folder, "Game.json"), "Game", values);
+
+                rig.Profiles.MaybeAutoLoadForGame("Game");
+                Check.True(rig.Profiles.PendingAutoApply.Wait(3000), "the apply should end");
+
+                Check.Equal(0, rig.Board.CountLine("sys.save!"), "no save after an aborted apply");
+                Check.Equal(0, rig.Board.CountLine("ss"), "no reboot after an aborted apply");
+                Check.Equal(0, rig.Board.CountLine("axis.maxtorque=1"), "the fifth line never went out");
             }
         }
 

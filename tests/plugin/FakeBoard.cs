@@ -79,9 +79,17 @@ namespace OdriveWheel.SimHubPlugin.Tests
         {
             lock (_lock)
             {
-                _replies.Add((_clock.ElapsedMilliseconds + delayMs, line));
+                AddReply(_clock.ElapsedMilliseconds + delayMs, line);
                 Monitor.PulseAll(_lock);
             }
+        }
+
+        // In order of arrival: a late reply arrives after one that was sent later but is faster.
+        private void AddReply(long dueMs, string line)
+        {
+            int at = _replies.Count;
+            while (at > 0 && _replies[at - 1].dueMs > dueMs) at--;
+            _replies.Insert(at, (dueMs, line));
         }
 
         public string[] Lines
@@ -295,7 +303,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private void Reply(string text)
         {
             if (Mute) return;
-            _replies.Add((_clock.ElapsedMilliseconds + ReplyDelayMs, text));
+            AddReply(_clock.ElapsedMilliseconds + ReplyDelayMs, text);
         }
     }
 
