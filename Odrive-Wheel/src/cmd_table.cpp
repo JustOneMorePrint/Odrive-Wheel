@@ -109,6 +109,13 @@ static int h_sys_hwtype(uint8_t, CmdType t, const char*, char *r, size_t s) {
     return 0;
 }
 
+// [pkg0] sys.build? — git hash and branch embedded at build time (see Makefile).
+static int h_sys_build(uint8_t, CmdType t, const char*, char *r, size_t s) {
+    if (t != CMD_TYPE_GET) return -1;
+    snprintf(r, s, "%s %s", BUILD_GIT_HASH, BUILD_GIT_BRANCH);
+    return 0;
+}
+
 // sys.main — id da mainclass atualmente rodando. CRITICO pro probe da
 // Configurator: ela compara esse valor contra a lista do sys.lsmain pra
 // decidir qual UI carregar. Sem isso, "Can't detect board".
@@ -1113,6 +1120,7 @@ const CmdEntry cmdtable[] = {
     { "sys",   "mteeprom",     h_sys_mteeprom },      // MT6835 persiste register map (aguardar 6 s!)
     { "sys",   "mtstatus",     h_sys_mtstatus },      // MT6835 boot/warnings/auto-cal
     { "sys",   "fxtest",       h_sys_fxtest },
+    { "sys",   "build",        h_sys_build },         // [pkg0] git hash + branch (read-only)
 
     // odrv.* (read-only; Configurator não escreve hardware aqui)
     { "odrv",  "vbus",         h_odrv_vbus },

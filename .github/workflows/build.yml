@@ -39,8 +39,13 @@ jobs:
     # 4. Build the firmware using Make
     - name: Build Firmware
       working-directory: ./Odrive-Wheel
+      env:
+        # Report the PR head instead of the temporary merge commit in sys.build?
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        BUILD_GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
       run: |
         set -o pipefail
+        export BUILD_GIT_HASH="${HEAD_SHA:0:8}"
         if ! make -j$(nproc) 2>&1 | tee build.log; then
           echo "::group::Build log tail"
           tail -n 200 build.log || true

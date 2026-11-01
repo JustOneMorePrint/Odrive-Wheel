@@ -148,7 +148,13 @@ if (-not $NoClean) {
   $cmdLines += "/mingw64/bin/mingw32-make clean"
 }
 
-$cmdLines += '/mingw64/bin/mingw32-make -j$(nproc)'
+# [pkg0] The MSYS2 login shell has no git on PATH, so resolve the build id here.
+$gitHash = & git -C $repoRoot describe --always --dirty --abbrev=8 --exclude='*'
+$gitBranch = & git -C $repoRoot rev-parse --abbrev-ref HEAD
+if ([string]::IsNullOrEmpty($gitHash)) { $gitHash = "unknown" }
+if ([string]::IsNullOrEmpty($gitBranch)) { $gitBranch = "unknown" }
+
+$cmdLines += ('/mingw64/bin/mingw32-make -j$(nproc) BUILD_GIT_HASH="{0}" BUILD_GIT_BRANCH="{1}"' -f $gitHash, $gitBranch)
 $cmd = ($cmdLines -join "`n")
 
 Write-Host "Running build in $firmwareDir"

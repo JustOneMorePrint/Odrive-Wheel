@@ -90,6 +90,15 @@ DEFS = -DSTM32F405xx \
        -D__weak=__attribute__\(\(weak\)\) \
        -D__packed=__attribute__\(\(__packed__\)\)
 
+# --- Build identification ----------------------------------------------------
+# [pkg0] Reported by sys.build?. Callers can pass both values in: CI builds a
+# merge commit on a detached HEAD, and the MSYS2 login shell used by
+# build-local.ps1 has no git on PATH.
+BUILD_GIT_HASH ?= $(shell git describe --always --dirty --abbrev=8 --exclude='*' 2>/dev/null)
+BUILD_GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+BUILD_GIT_HASH := $(or $(BUILD_GIT_HASH),unknown)
+BUILD_GIT_BRANCH := $(or $(BUILD_GIT_BRANCH),unknown)
+
 # --- Sources: locais (patches MKS XDrive Mini) -------------------------------
 # Usamos o board.cpp upstream direto — motors[1] ficam em memoria valida
 # pois AXIS_COUNT=2 (default stock). MKS main.cpp patch opcional esta em
@@ -327,6 +336,18 @@ $(BUILD_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
 	$(AS) -c $(ASFLAGS) $< -o $@
 
+# [pkg0] Only cmd_table.o carries the build id; the stamp rebuilds it in
+# incremental builds whenever the id changes, and nothing else.
+BUILD_ID      = $(BUILD_GIT_HASH) $(BUILD_GIT_BRANCH)
+BUILD_ID_FILE = $(BUILD_DIR)/build_id.stamp
+
+$(BUILD_DIR)/src/cmd_table.o: CXXFLAGS += -DBUILD_GIT_HASH=\"$(BUILD_GIT_HASH)\" -DBUILD_GIT_BRANCH=\"$(BUILD_GIT_BRANCH)\"
+$(BUILD_DIR)/src/cmd_table.o: $(BUILD_ID_FILE)
+
+$(BUILD_ID_FILE): FORCE
+	@mkdir -p $(dir $@)
+	@[ "$$(cat $@ 2>/dev/null)" = "$(BUILD_ID)" ] || echo "$(BUILD_ID)" > $@
+
 $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
@@ -359,4 +380,4 @@ clean:
 # no primeiro build.
 -include $(OBJECTS:.o=.d)
 
-.PHONY: all clean flash-dfu
+.PHONY: all clean flash-dfu FORCE
