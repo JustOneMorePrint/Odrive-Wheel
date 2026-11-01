@@ -37,7 +37,6 @@
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
     <Reference Include="System.Xaml" />
-    <Reference Include="System.IO.Ports" />
     <Reference Include="System.Management" />
     <!-- Newtonsoft.Json vem do SimHub install (v13.0.4). Referencia direto
          em vez de puxar via NuGet pra garantir a mesma versão sem conflito
@@ -56,12 +55,14 @@
     <!-- Badge do projeto — embutido no DLL como WPF Resource; acessível via
          pack://application:,,,/OdriveWheel.SimHubPlugin;component/Assets/logo.png -->
     <Resource Include="Assets\logo.png" />
+    <!-- [pkg1] Parameter catalog, read by OdriveParameterCatalog.LoadEmbedded. -->
+    <EmbeddedResource Include="Core\parameter-catalog.json" LogicalName="OdriveWheel.SimHubPlugin.parameter-catalog.json" />
   </ItemGroup>
 
   <Target Name="CopyToSimHub" AfterTargets="Build" Condition="Exists('$(SimHubPath)')">
     <Message Text="Copying $(AssemblyName).dll to $(SimHubPath)" Importance="high" />
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(SimHubPath)" ContinueOnError="true" />
-    <!-- HidSharp.dll is intentionally NOT copied: SimHub already ships v2.1.0 -->
+    <!-- HidSharp.dll is intentionally NOT copied: SimHub ships its own -->
   </Target>
 
 </Project>
