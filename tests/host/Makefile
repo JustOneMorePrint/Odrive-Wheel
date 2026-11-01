@@ -7,6 +7,7 @@ CXXFLAGS += -std=gnu++17 -Wall -Wextra -Werror -g -MMD -MP -I.
 
 check: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
+	@CXX="$(CXX)" MAKE="$(MAKE)" sh test_build_info.sh
 
 $(BUILD_DIR)/%: %.cpp
 	@mkdir -p $(dir $@)

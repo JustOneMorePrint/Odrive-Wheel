@@ -25,6 +25,7 @@ Erfolgreicher Lauf:
 
 ```text
 test_example_clamp.cpp: 5 checks, 0 failed
+test_build_info.sh: <n> checks, 0 failed, 0 skipped
 ```
 
 Schlägt ein Check fehl, stehen Datei und Zeile in der Ausgabe, und `make` endet mit
@@ -42,3 +43,17 @@ einem Fehlercode.
 
 `example_clamp.hpp` und `test_example_clamp.cpp` sind nur das Beispiel für dieses Gerüst.
 Sie können entfallen, sobald es echte Tests gibt.
+
+## Tests der Build-Kennung (`sys.build?`)
+
+Die Firmware meldet `<checkout>[-dirty] [head=<PR-Head>] branch=<Branch>`.
+`<checkout>` ist immer der tatsächlich gebaute Commit, bei einem PR-Build in der CI also
+der Merge-Commit. `head=` gibt es nur dort.
+
+| Datei | Prüft | Voraussetzung |
+|---|---|---|
+| `test_build_info.sh` (läuft mit `check`) | Heikle Branch-Namen kommen über die echte Makefile-Regel Byte für Byte im kompilierten `BUILD_ID` an und werden nicht ausgewertet; zudem Header-Aktualisierung, `-dirty`, detached HEAD, Kürzung, Ablehnung ungültiger Werte | git, make, g++ |
+| `check_firmware_rebuild.sh` (eigener CI-Schritt im Firmware-Build) | Kennung in der `.bin`; unveränderter Wiederholungsbuild kompiliert nichts; geänderte Metadaten kompilieren nur `cmd_table.cpp` neu und landen in der `.bin`; danach wieder identische `.bin` | Linux/WSL, ARM-Toolchain, fertiger Build, sauberer Checkout |
+
+Lässt das Dateisystem einen Branch-Namen nicht zu (Windows: z. B. `"` oder `|`), meldet
+`test_build_info.sh` ihn als `SKIPPED` und prüft ihn nur über die Umgebungsvariable.
