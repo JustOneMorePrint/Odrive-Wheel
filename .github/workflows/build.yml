@@ -11,6 +11,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # sys.build? reports the built checkout from git (the merge commit on PRs).
+    # These add what a detached HEAD can't tell; see tools/gen_build_info.sh.
+    env:
+      BUILD_GIT_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      BUILD_GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+
     steps:
     # 1. Checkout the repository and its submodules with full history for versioning
     - name: Checkout repository
@@ -39,13 +45,8 @@ jobs:
     # 4. Build the firmware using Make
     - name: Build Firmware
       working-directory: ./Odrive-Wheel
-      env:
-        # Report the PR head instead of the temporary merge commit in sys.build?
-        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        BUILD_GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
       run: |
         set -o pipefail
-        export BUILD_GIT_HASH="${HEAD_SHA:0:8}"
         if ! make -j$(nproc) 2>&1 | tee build.log; then
           echo "::group::Build log tail"
           tail -n 200 build.log || true
@@ -59,7 +60,11 @@ jobs:
           exit 1
         fi
 
-    # 5. Upload build log if something failed
+    # 5. Check the build id in the binary and its rebuild behavior
+    - name: Check build id
+      run: sh tests/host/check_firmware_rebuild.sh
+
+    # 6. Upload build log if something failed
     - name: Upload build log
       if: failure()
       uses: actions/upload-artifact@v4
@@ -67,7 +72,7 @@ jobs:
         name: odrive-wheel-build-log
         path: ./Odrive-Wheel/build.log
 
-    # 6. Upload the compiled binary as an artifact
+    # 7. Upload the compiled binary as an artifact
     - name: Upload Firmware Artifact
       uses: actions/upload-artifact@v4
       with:
