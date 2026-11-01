@@ -327,6 +327,18 @@ $(BUILD_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
 	$(AS) -c $(ASFLAGS) $< -o $@
 
+# [pkg0] Build id for sys.build?. The generator reads git and the environment
+# itself, so branch names never pass through make or a command line. Only
+# cmd_table.o uses the header, which changes only when the id does.
+BUILD_INFO_H = $(BUILD_DIR)/build_info.h
+
+$(BUILD_DIR)/src/cmd_table.o: CXXFLAGS += -I$(BUILD_DIR)
+$(BUILD_DIR)/src/cmd_table.o: $(BUILD_INFO_H)
+
+$(BUILD_INFO_H): FORCE
+	@mkdir -p $(dir $@)
+	@sh tools/gen_build_info.sh $@
+
 $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
@@ -347,9 +359,15 @@ flash-dfu: $(BUILD_DIR)/$(TARGET).bin
 # em SOURCES com paths "../ODrive-fw-v0.5.6/...", o que coloca os .o do ODrive
 # em "Odrive-Wheel/ODrive-fw-v0.5.6/..." (fora do BUILD_DIR). Sem este 2º rm,
 # uma mudança em motor.hpp NÃO recompila motor.cpp em build incremental.
+# [pkg0] Mirrored objects are addressed through build/../, which no longer resolves
+# once BUILD_DIR is gone, and rm -f does not report that. Strip the prefix so the
+# paths work without BUILD_DIR. No shell metacharacters in the rm line: mingw32-make
+# silently cuts a recipe line it hands to sh at about 8 KB, and this one is longer.
+MIRRORED_OBJECTS = $(patsubst $(BUILD_DIR)/../%,%,$(filter $(BUILD_DIR)/../%,$(OBJECTS)))
+
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(OBJECTS) $(OBJECTS:.o=.d)
+	rm -f $(MIRRORED_OBJECTS) $(MIRRORED_OBJECTS:.o=.d)
 
 # Inclui dependency files (-MMD gera um .d ao lado de cada .o com a lista de
 # headers). Antes era $(wildcard $(BUILD_DIR)/**/*.d) — bug duplo: (a) ** não
@@ -359,4 +377,4 @@ clean:
 # no primeiro build.
 -include $(OBJECTS:.o=.d)
 
-.PHONY: all clean flash-dfu
+.PHONY: all clean flash-dfu FORCE

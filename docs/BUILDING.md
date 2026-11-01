@@ -62,6 +62,52 @@ Wraps autogen + MSYS2 + ARM GCC. Requires MSYS2 at `C:\msys64` (override with
 .\build-local.ps1                     # full clean build
 .\build-local.ps1 -NoClean            # incremental (skip make clean)
 .\build-local.ps1 -SkipSubmoduleInit  # skip git submodule update
+.\build-local.ps1 -ToolchainBin $toolchainBin  # use this compiler folder
+```
+
+Das Skript endet bei jedem Fehler mit einem Fehlercode ungleich 0, auch bei einem Aufruf aus
+einer laufenden PowerShell-Sitzung (`$LASTEXITCODE`). Das gilt für einen fehlgeschlagenen
+Shell-Aufruf, Verzeichniswechsel und Make-Lauf. Alte Dateien in `Odrive-Wheel/build` lassen
+einen fehlgeschlagenen Build nicht als erfolgreich erscheinen.
+
+Auch `-NoClean` führt Autogen erneut aus. Dadurch bekommen die generierten Header neue
+Zeitstempel, und Make übersetzt die davon abhängigen Dateien neu. Ein Wiederholungsbuild ohne
+jede Übersetzung gibt es nur über den direkten Make-Aufruf (Option B2).
+
+`make clean` entfernt `build/` und auch die Objekte der ODrive- und OpenFFBoard-Quellen, die
+daneben in `Odrive-Wheel/ODrive-fw-v0.5.6/` und `Odrive-Wheel/OpenFFBoard-master/` liegen. Beide
+Ordner enthalten nur Build-Ausgaben und bleiben leer zurück. `build/` von Hand zu löschen ist kein
+Ersatz, denn die Objekte daneben blieben dann liegen und würden teilweise wieder mitgelinkt.
+
+### Option B2 — Local build, MSYS2 MINGW64 shell
+
+Voraussetzung: Autogen ist einmal gelaufen (z. B. über `build-local.ps1`), und ARM GCC und git
+sind im `PATH` der Shell.
+
+```bash
+mingw32-make -C Odrive-Wheel -j4
+```
+
+### Build-Kennung (`sys.build?`)
+
+Der Build liest Commit und Branch selbst aus git. Für den Normalfall ist nichts zu setzen.
+Nur wenn der Checkout den Branch nicht kennt (CI mit detached HEAD), gibt es zwei Umgebungs-
+variablen: `BUILD_GIT_BRANCH` und `BUILD_GIT_PR_HEAD`. Als Make-Argument
+(`make BUILD_GIT_BRANCH=...`) sind sie nicht geeignet, weil Make den Wert dann selbst auswertet.
+
+| Aufrufweg mit `BUILD_GIT_BRANCH` | Verhalten |
+|---|---|
+| Linux/WSL, `make` | Wert bleibt erhalten |
+| `build-local.ps1` | Wert bleibt erhalten, das Skript trägt ihn in `MSYS2_ENV_CONV_EXCL` ein und behält vorhandene Einträge |
+| MSYS2-Shell, `make` (MSYS-Variante) | Wert bleibt erhalten |
+| MSYS2-Shell, `mingw32-make` | Selbst eintragen, siehe unten |
+
+MSYS schreibt pfadähnliche Werte auf dem Weg in ein natives Programm um (`x=/y` wird zu
+`x=Y:/`). In der MSYS2-Shell passiert das, bevor Make überhaupt startet. Der Build bricht in
+diesem Fall mit einer Fehlermeldung ab, statt eine falsche Kennung einzubetten:
+
+```bash
+MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL;}BUILD_GIT_BRANCH" BUILD_GIT_BRANCH='x=/y' mingw32-make -C Odrive-Wheel -j4
 ```
 
 ### Option C — Manual (Linux / WSL / macOS)

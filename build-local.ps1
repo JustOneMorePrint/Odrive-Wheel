@@ -7,6 +7,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# [pkg0] Without this a terminating error leaves $LASTEXITCODE untouched for callers
+# in the same PowerShell session, so a failed build could pass as a success.
+trap { [Console]::Error.WriteLine($_); exit 1 }
+
 # Auto-discover ARM toolchain — try common install locations across versions.
 # User can override via -ToolchainBin param.
 if ([string]::IsNullOrEmpty($ToolchainBin)) {
@@ -29,12 +33,12 @@ if ([string]::IsNullOrEmpty($ToolchainBin)) {
   }
 }
 
-if (!(Test-Path $MsysBash)) {
+if (!(Test-Path -LiteralPath $MsysBash)) {
   Write-Error "MSYS2 bash not found at $MsysBash. Install from https://www.msys2.org/ or override with -MsysBash."
   exit 1
 }
 
-if ([string]::IsNullOrEmpty($ToolchainBin) -or !(Test-Path $ToolchainBin)) {
+if ([string]::IsNullOrEmpty($ToolchainBin) -or !(Test-Path -LiteralPath $ToolchainBin)) {
   Write-Error "ARM toolchain not found. Install from https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads or override with -ToolchainBin."
   exit 1
 }
@@ -53,11 +57,18 @@ if (-not $SkipSubmoduleInit) {
 
 function Convert-ToMsysPath {
   param([string]$Path)
-  $full = (Resolve-Path $Path).Path
+  $full = (Resolve-Path -LiteralPath $Path).Path
   $drive, $rest = $full -split ":", 2
   $drive = $drive.ToLower()
   $rest = $rest -replace "\\", "/"
   return "/$drive$rest"
+}
+
+# [pkg0] PowerShell 5.1 passes embedded double quotes to native programs unescaped,
+# which splits the shell command into several arguments. Single quotes arrive intact.
+function ConvertTo-ShellLiteral {
+  param([string]$Value)
+  return "'" + ($Value -replace "'", "'\''") + "'"
 }
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -77,7 +88,7 @@ function Ensure-ToolFile {
     [string]$Path,
     [string]$Url
   )
-  if (!(Test-Path $Path)) {
+  if (!(Test-Path -LiteralPath $Path)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     Invoke-WebRequest -Uri $Url -OutFile $Path
   }
@@ -88,9 +99,9 @@ Ensure-ToolFile -Path $interfaceGenerator -Url "https://raw.githubusercontent.co
 
 $venvPython = Join-Path $repoRoot ".venv\bin\python.exe"
 $venvPythonWin = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (Test-Path $venvPython) {
+if (Test-Path -LiteralPath $venvPython) {
   $pythonExe = $venvPython
-} elseif (Test-Path $venvPythonWin) {
+} elseif (Test-Path -LiteralPath $venvPythonWin) {
   $pythonExe = $venvPythonWin
 } else {
   $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
@@ -116,7 +127,7 @@ if ($LASTEXITCODE -ne 0) {
   }
 }
 
-Push-Location $odriveFirmwareDir
+Push-Location -LiteralPath $odriveFirmwareDir
 New-Item -ItemType Directory -Force -Path "autogen" | Out-Null
 
 & $pythonExe $versionScript --output autogen/version.c
@@ -140,27 +151,56 @@ $msysToolchain = Convert-ToMsysPath $ToolchainBin
 $msysFirmware = Convert-ToMsysPath $firmwareDir
 
 $cmdLines = @(
-  ('export PATH="{0}":$PATH' -f $msysToolchain),
-  ('cd "{0}"' -f $msysFirmware)
+  'set -e',
+  ('export PATH={0}:$PATH' -f (ConvertTo-ShellLiteral $msysToolchain)),
+  ('cd {0}' -f (ConvertTo-ShellLiteral $msysFirmware)),
+  # [pkg0] MSYS rewrites path-like values on their way into a native program
+  # (x=/y becomes x=Y:/), so exempt the branch name and keep existing entries.
+  'export MSYS2_ENV_CONV_EXCL=${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL'';''}BUILD_GIT_BRANCH'
 )
+
+# [pkg0] tools/gen_build_info.sh reads the build id from git, which the MSYS2
+# login shell doesn't have on PATH. Appended so MSYS2's own tools keep priority.
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if ($gitCmd) {
+  $cmdLines += ('export PATH=$PATH:{0}' -f (ConvertTo-ShellLiteral (Convert-ToMsysPath (Split-Path -Parent $gitCmd.Source))))
+}
 
 if (-not $NoClean) {
   $cmdLines += "/mingw64/bin/mingw32-make clean"
 }
 
 $cmdLines += '/mingw64/bin/mingw32-make -j$(nproc)'
+# [pkg0] Only the last line writes this marker, so it proves the whole command ran.
+$cmdLines += 'touch build/build-local.done'
 $cmd = ($cmdLines -join "`n")
 
-Write-Host "Running build in $firmwareDir"
-& $MsysBash -lc $cmd
+$doneMarker = Join-Path $firmwareDir "build\build-local.done"
+Remove-Item -LiteralPath $doneMarker -Force -ErrorAction SilentlyContinue
 
-if ($LASTEXITCODE -ne 0) {
-  Write-Error "Build failed with exit code $LASTEXITCODE"
-  exit $LASTEXITCODE
+Write-Host "Running build in $firmwareDir"
+
+# [pkg0] Compiler warnings arrive on stderr. With Stop, PowerShell 5.1 aborts on the
+# first one if a caller redirects this script's error stream; the exit code decides.
+$ErrorActionPreference = "Continue"
+& $MsysBash -lc $cmd
+$shellExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+
+if ($shellExit -ne 0) {
+  Write-Error "Build failed with exit code $shellExit"
+  exit $shellExit
 }
 
+# [pkg0] Artifacts of an earlier build must not make a build that never ran look good.
+if (!(Test-Path -LiteralPath $doneMarker)) {
+  Write-Error "The build shell returned without completing the build command: $MsysBash"
+  exit 1
+}
+Remove-Item -LiteralPath $doneMarker -Force
+
 $binPath = Join-Path $firmwareDir "build\odrive-wheel.bin"
-if (!(Test-Path $binPath)) {
+if (!(Test-Path -LiteralPath $binPath)) {
   Write-Error "Missing build output: $binPath"
   exit 1
 }

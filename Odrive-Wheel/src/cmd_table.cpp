@@ -14,6 +14,7 @@
 
 #include "cmdparser.h"
 #include "odrive_bridge.h"
+#include "build_info.h"  // [pkg0] generated, defines BUILD_ID
 #include "FreeRTOS.h"
 #include "task.h"
 #include "stm32f4xx_hal.h"
@@ -106,6 +107,14 @@ static int h_sys_swver(uint8_t, CmdType t, const char*, char *r, size_t s) {
 static int h_sys_hwtype(uint8_t, CmdType t, const char*, char *r, size_t s) {
     if (t != CMD_TYPE_GET) return -1;
     strncpy(r, "ODrive-Wheel", s);
+    return 0;
+}
+
+// [pkg0] sys.build? — checkout hash, PR head (CI PR builds only) and branch from
+// the generated build_info.h (see tools/gen_build_info.sh).
+static int h_sys_build(uint8_t, CmdType t, const char*, char *r, size_t s) {
+    if (t != CMD_TYPE_GET) return -1;
+    snprintf(r, s, "%s", BUILD_ID);
     return 0;
 }
 
@@ -1113,6 +1122,7 @@ const CmdEntry cmdtable[] = {
     { "sys",   "mteeprom",     h_sys_mteeprom },      // MT6835 persiste register map (aguardar 6 s!)
     { "sys",   "mtstatus",     h_sys_mtstatus },      // MT6835 boot/warnings/auto-cal
     { "sys",   "fxtest",       h_sys_fxtest },
+    { "sys",   "build",        h_sys_build },         // [pkg0] git hash + branch (read-only)
 
     // odrv.* (read-only; Configurator não escreve hardware aqui)
     { "odrv",  "vbus",         h_odrv_vbus },
