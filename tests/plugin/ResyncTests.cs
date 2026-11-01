@@ -394,14 +394,13 @@ namespace OdriveWheel.SimHubPlugin.Tests
         {
             using (var rig = new Rig())
             {
-                // No echo comes back, but two late lines look like IDLE right after the sync gave up.
+                // No echo comes back, so whatever arrives could be late. It must not even ask.
                 rig.Board.Mute = true;
                 var ticket = rig.Service.RequestStop();
-                rig.Board.Inject("1", 195);
-                rig.Board.Inject("1", 225);
 
                 Check.True(ticket.WaitForResult(3000), "the stop should finish");
                 Check.Equal(StopState.Unconfirmed, ticket.State, "nothing proves IDLE");
+                Check.Equal(0, rig.Board.CountLine("r axis0.current_state"), "no read-back without sync");
             }
         }
 
