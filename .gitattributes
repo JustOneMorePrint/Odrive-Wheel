@@ -1,0 +1,3 @@
+# POSIX shell breaks on CRLF, and core.autocrlf=true would check these out that way.
+Odrive-Wheel/tools/gen_build_info.sh text eol=lf
+tests/host/*.sh text eol=lf

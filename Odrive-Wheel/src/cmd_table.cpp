@@ -14,6 +14,7 @@
 
 #include "cmdparser.h"
 #include "odrive_bridge.h"
+#include "build_info.h"  // [pkg0] generated, defines BUILD_ID
 #include "FreeRTOS.h"
 #include "task.h"
 #include "stm32f4xx_hal.h"
@@ -109,10 +110,11 @@ static int h_sys_hwtype(uint8_t, CmdType t, const char*, char *r, size_t s) {
     return 0;
 }
 
-// [pkg0] sys.build? — git hash and branch embedded at build time (see Makefile).
+// [pkg0] sys.build? — checkout hash, PR head (CI PR builds only) and branch from
+// the generated build_info.h (see tools/gen_build_info.sh).
 static int h_sys_build(uint8_t, CmdType t, const char*, char *r, size_t s) {
     if (t != CMD_TYPE_GET) return -1;
-    snprintf(r, s, "%s %s", BUILD_GIT_HASH, BUILD_GIT_BRANCH);
+    snprintf(r, s, "%s", BUILD_ID);
     return 0;
 }
 

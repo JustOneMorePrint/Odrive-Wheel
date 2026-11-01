@@ -144,17 +144,18 @@ $cmdLines = @(
   ('cd "{0}"' -f $msysFirmware)
 )
 
+# [pkg0] tools/gen_build_info.sh reads the build id from git, which the MSYS2
+# login shell doesn't have on PATH. Appended so MSYS2's own tools keep priority.
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if ($gitCmd) {
+  $cmdLines += ('export PATH=$PATH:"{0}"' -f (Convert-ToMsysPath (Split-Path -Parent $gitCmd.Source)))
+}
+
 if (-not $NoClean) {
   $cmdLines += "/mingw64/bin/mingw32-make clean"
 }
 
-# [pkg0] The MSYS2 login shell has no git on PATH, so resolve the build id here.
-$gitHash = & git -C $repoRoot describe --always --dirty --abbrev=8 --exclude='*'
-$gitBranch = & git -C $repoRoot rev-parse --abbrev-ref HEAD
-if ([string]::IsNullOrEmpty($gitHash)) { $gitHash = "unknown" }
-if ([string]::IsNullOrEmpty($gitBranch)) { $gitBranch = "unknown" }
-
-$cmdLines += ('/mingw64/bin/mingw32-make -j$(nproc) BUILD_GIT_HASH="{0}" BUILD_GIT_BRANCH="{1}"' -f $gitHash, $gitBranch)
+$cmdLines += '/mingw64/bin/mingw32-make -j$(nproc)'
 $cmd = ($cmdLines -join "`n")
 
 Write-Host "Running build in $firmwareDir"
