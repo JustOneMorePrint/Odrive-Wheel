@@ -213,7 +213,7 @@ fi
 
 # The exclusion covers the branch name only, conversion stays on for the rest.
 printf 'all:\n\t@printf "%%s" "$$PROBE_OTHER"\n' > "$work/probe.mk"
-actual=$(export PROBE_OTHER='x=/y'; "$MAKE" -s -f "$work/probe.mk")
+actual=$(export PROBE_OTHER='x=/y'; "$MAKE" --no-print-directory -s -f "$work/probe.mk")
 if [ "$native_make" = yes ]; then
     check_true "other variables are still converted" '[ "$actual" != "x=/y" ]'
 else
