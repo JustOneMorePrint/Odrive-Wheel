@@ -74,6 +74,11 @@ Auch `-NoClean` führt Autogen erneut aus. Dadurch bekommen die generierten Head
 Zeitstempel, und Make übersetzt die davon abhängigen Dateien neu. Ein Wiederholungsbuild ohne
 jede Übersetzung gibt es nur über den direkten Make-Aufruf (Option B2).
 
+`make clean` entfernt `build/` und auch die Objekte der ODrive- und OpenFFBoard-Quellen, die
+daneben in `Odrive-Wheel/ODrive-fw-v0.5.6/` und `Odrive-Wheel/OpenFFBoard-master/` liegen. Beide
+Ordner enthalten nur Build-Ausgaben und bleiben leer zurück. `build/` von Hand zu löschen ist kein
+Ersatz, denn die Objekte daneben blieben dann liegen und würden teilweise wieder mitgelinkt.
+
 ### Option B2 — Local build, MSYS2 MINGW64 shell
 
 Voraussetzung: Autogen ist einmal gelaufen (z. B. über `build-local.ps1`), und ARM GCC und git

@@ -79,3 +79,7 @@ jobs:
         name: odrive-wheel-firmware
         path: ./Odrive-Wheel/build/odrive-wheel.bin
         retention-days: 14
+
+    # 8. Check make clean last: it deletes the build and compiles everything again
+    - name: Check clean
+      run: sh tests/host/check_firmware_clean.sh

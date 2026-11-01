@@ -32,6 +32,7 @@ Erfolgreicher Lauf:
 ```text
 test_example_clamp.cpp: 5 checks, 0 failed
 test_build_info.sh: <n> checks, 0 failed, 0 skipped
+test_make_clean.sh: <n> checks, 0 failed
 ```
 
 Schlägt ein Check fehl, stehen Datei und Zeile in der Ausgabe, und `make` endet mit
@@ -77,3 +78,19 @@ MAKE=mingw32-make sh tests/host/check_firmware_rebuild.sh
 
 Das Skript ruft Make direkt auf, Autogen läuft dabei nicht. Deshalb gilt die Erwartung „kompiliert
 nichts“ nur hier und nicht für `build-local.ps1 -NoClean`, das Autogen erneut ausführt.
+
+## Tests von `make clean`
+
+Die Objekte der ODrive- und OpenFFBoard-Quellen liegen nicht in `build/`, sondern daneben in
+`Odrive-Wheel/ODrive-fw-v0.5.6/` und `Odrive-Wheel/OpenFFBoard-master/`.
+
+| Datei | Prüft | Voraussetzung |
+|---|---|---|
+| `test_make_clean.sh` (läuft mit `check`) | Die echte Clean-Regel entfernt alle Objekte und `.d`-Dateien, auch ohne vorhandenes `build/`, und sonst nichts; ein fehlgeschlagenes Löschen beendet Make mit Fehler. Die Objekte sind leere Attrappen an den Pfaden aus dem Makefile | make |
+| `check_firmware_clean.sh` (letzter CI-Schritt im Firmware-Build) | Nach einem echten Build: `make clean` lässt nichts übrig und ändert keine versionierte Datei; der nächste Build übersetzt alle Quellen und ergibt dieselbe `.bin` | ARM-Toolchain, fertiger Build, sauberer Checkout |
+
+Unter Windows, in der Shell „MSYS2 MINGW64“ und mit denselben Voraussetzungen wie oben:
+
+```bash
+MAKE=mingw32-make sh tests/host/check_firmware_clean.sh
+```
