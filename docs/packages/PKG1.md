@@ -58,8 +58,8 @@ does not have those functions yet. The capability check is the one firmware chan
 
 ## Teilschritte
 
-Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die Basis,
-1b–1e bauen darauf auf und sind untereinander unabhängig.
+Each step is a branch and PR of its own (`pkg/1a-...` and so on). The order and the real dependencies are in
+`docs/ROADMAP.md`: parts of these steps now fall into different stages, the export for instance comes before all else that is left of 1b.
 
 | Teilschritt | Inhalt | Test durch den Nutzer |
 |---|---|---|
@@ -79,7 +79,8 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | Editing the ten `config.*` fields of Power / Brake, to RAM only | yes, tested against the simulated board | no |
 | `sys.capabilities?` in the firmware, and its use in the plugin | yes, on the PC: real parser and formatting, simulated board | no |
 | Editing anything else, saving (`ss`) from the editor, clearing errors, erasing the config, state changes and calibrations | planned | – |
-| Console, export/import | planned | – |
+| Export, comparison, diagnostic report | planned next, stage 1 in `docs/ROADMAP.md` | – |
+| Console, import | planned | – |
 
 The lists only read: their logic only gets a read delegate, and `tests/plugin/EditorWindowTests.cs`
 checks that on the wire. Without a request the window reads nothing but the eight values with
@@ -215,6 +216,8 @@ too low on its own:
 
 Each write is a state of its own, so the values go out in an order in which no step adds a problem.
 
+The contract all of this follows is in `docs/FOUNDATIONS.md`, this section says how Power / Brake uses it.
+
 **Limits:**
 
 - The state checks run in the plugin, right before each write. They are no atomic safeguard: another
@@ -250,6 +253,8 @@ nicht der Web-Client:
   Parameter ohne Text in beiden Quellen tragen den Hinweis „No description in the firmware interface.“
 
 ## Details zu 1d
+
+The order of the setup, the comparison with FFBeast and what can be measured and what has to be entered are in `docs/HARDWARE.md`.
 
 **Kt-Wizard** – Eingabe wahlweise als:
 - Kt in Nm/A_rms → ODrive-Wert = Kt_rms / √2

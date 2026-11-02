@@ -22,7 +22,7 @@ After the firmware is flashed, the **"First-time motor bring-up"** section is **
 - **MKS XDrive Mini** board (ODrive v3.6 clone, STM32F405)
 - **BLDC motor** (3-phase — no hall, no stepper driver)
 - **Incremental ABZ encoder** (Z optional)
-- **12 to 48 V power supply** (mind the voltage variant of your MKS XDrive Mini)
+- **24 to 48 V power supply**, nominal (mind the voltage variant of your MKS XDrive Mini)
 - **Brake resistor** wired to the AUX terminals (typically 2 Ω 50 W)
 - **USB-C cable for data** (not just for charging!)
 

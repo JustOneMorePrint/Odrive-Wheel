@@ -36,8 +36,8 @@ input_torque_ ─────►  Controller  ─────►  torque_setpoin
                               [shunt sense → Iq feedback to PI loop]
 ```
 
-The whole chain runs at the FOC ISR rate (8 kHz on the MKS XDrive Mini),
-synchronous with PWM updates.
+The FFB layer above `input_torque_` runs at 1 kHz. From the controller down it runs at the FOC ISR rate,
+8 kHz, synchronous with PWM updates, so one setpoint is held for about 8 control loops. See `docs/MEASUREMENT.md`.
 
 ## Stage-by-stage parameters
 
