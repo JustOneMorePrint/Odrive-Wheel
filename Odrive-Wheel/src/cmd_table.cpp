@@ -15,6 +15,7 @@
 #include "cmdparser.h"
 #include "odrive_bridge.h"
 #include "build_info.h"  // [pkg0] generated, defines BUILD_ID
+#include "firmware_capabilities.h"  // [pkg1] sys.capabilities?
 #include "FreeRTOS.h"
 #include "task.h"
 #include "stm32f4xx_hal.h"
@@ -1131,6 +1132,7 @@ const CmdEntry cmdtable[] = {
     { "sys",   "mtstatus",     h_sys_mtstatus },      // MT6835 boot/warnings/auto-cal
     { "sys",   "fxtest",       h_sys_fxtest },
     { "sys",   "build",        h_sys_build },         // [pkg0] git hash + branch (read-only)
+    { "sys",   "capabilities", firmware_capabilities_cmd },  // [pkg1] what replies guarantee (read-only)
 
     // odrv.* (read-only; Configurator não escreve hardware aqui)
     { "odrv",  "vbus",         h_odrv_vbus },

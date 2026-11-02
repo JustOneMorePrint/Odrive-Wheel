@@ -2,7 +2,8 @@
 
 Ziel: Das SimHub-Plugin übernimmt alle Funktionen des Web-Clients außer den
 Analyse-Werkzeugen (Performance-Test, Sweep, Live-Plots, FFT, Overlay, Force-Test),
-die in Paket 2 folgen. Keine Firmware-Änderungen in diesem Paket.
+die in Paket 2 folgen. No firmware changes in this package, except the read-only
+`sys.capabilities?`.
 
 Die Konfiguration erfolgt ausschließlich über das SimHub-Plugin. Der Web-Client bleibt nur
 als lesbare Referenz im Repository und wird nicht weiterentwickelt, GitHub Pages gehört
@@ -10,9 +11,10 @@ nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die 
 `Odrive-Wheel/tools/odrive-wheel.html` gemeint.
 
 **Status:** 1a is in `main`, its hardware tests are open. Of 1b, the read-only tabs, the power supply
-data and the editing of Power / Brake to RAM are implemented and not checked on the board
-([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin does not have
-those functions yet.
+data, the editing of Power / Brake to RAM and the firmware capability check are implemented and not
+checked on the board ([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin
+does not have those functions yet. The capability check is the one firmware change of this package, see
+[Firmware capabilities](#firmware-capabilities).
 
 ## Architektur
 
@@ -75,12 +77,74 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | Read-only lists with targeted refresh (tab or group), decoded errors, visible read failures, outdated values | yes, tested against the simulated board | no |
 | Power supply data in the plugin settings | yes, tested without a board | does not touch the board |
 | Editing the ten `config.*` fields of Power / Brake, to RAM only | yes, tested against the simulated board | no |
+| `sys.capabilities?` in the firmware, and its use in the plugin | yes, on the PC: real parser and formatting, simulated board | no |
 | Editing anything else, saving (`ss`) from the editor, clearing errors, erasing the config, state changes and calibrations | planned | – |
 | Console, export/import | planned | – |
 
 The lists only read: their logic only gets a read delegate, and `tests/plugin/EditorWindowTests.cs`
 checks that on the wire. Without a request the window reads nothing but the eight values with
-`"poll": true`. The only way to write is the editor described next.
+`"poll": true`. The only way to write is the editor described below.
+
+## Firmware capabilities
+
+A reply alone does not say whether it is complete: `0.015625` is what current firmware sends for that
+float, and what older firmware sends for anything that rounds to it. So the firmware says it.
+
+**The contract.** `sys.capabilities?` answers `[sys.capabilities?|v=1 ascii_full=1 float32_rt=1]`, with the
+value `v=1 ascii_full=1 float32_rt=1`:
+
+| Field | Meaning |
+|---|---|
+| `v` | Version of this schema. Another field or another meaning needs another version. |
+| `ascii_full` | `1`: an `r <path>` reply holds the whole number, or an error. It is never cut. |
+| `float32_rt` | `1`: a float in an `r <path>` reply parses back to the same float32 (`%.9g`, the fix of PR #6). |
+
+- Exactly these three fields, each once, separated by one space. Anything else is no declaration: a missing
+  or repeated field, a value other than `0` or `1`, an extra field, another `v`.
+- Get only. `sys.capabilities=…` and `sys.capabilities!` answer `ERR` and change nothing. It has no state and
+  touches no flash. It is a read-only command for any client, also with the software stop set.
+- Firmware without the command answers `NOT_FOUND`.
+- `sys.swver` and `sys.build` keep their meaning, and nothing is concluded from them.
+
+`Odrive-Wheel/src/firmware_capabilities.c` is the handler. `tests/host/test_firmware_capabilities.cpp` runs it
+in the real parser and checks the registration and the frame. `tests/host/test_ascii_read.cpp` holds both flags
+against the real formatting, so a change there fails until the declaration follows.
+
+**The check in the plugin** (`Core/OdriveFirmwareCapabilities.cs`):
+
+- `OdriveCapabilityDetector` asks once per connection, when `OdriveSerialService.Connected` reports it. That event
+  comes on a thread pool thread, so nothing waits on the serial worker. There is no polling.
+- A declaration is bound to the `ConnectGeneration` it was asked on, and that is checked on the way out and on the
+  way back: the request cannot reach a newer connection, and a late reply of an earlier connection is ignored. After a
+  disconnect, a released port or a reconnect the old one counts for nothing, and the new connection is asked again.
+- Timeout, `ERR`, `NOT_FOUND` and every unusable reply leave the plugin as careful as it was without a check.
+  There is no trust from a Git hash, a branch, `sys.swver`, the length of a number or a switch. **Check firmware
+  again** in the window asks once more on request, only after a check that found nothing.
+- The read uses `SerialOperationContext.ForConnection`: it is bound to the connection only, as it has to work
+  with the stop latch set, and a connection can start with a latch that nobody clears. A running stop still
+  ends it and goes first. It then runs again when the stop has finished, at most `MaxAttempts` times in all. What the
+  latch blocks stays blocked, and the commands of an apply stay bound to the stop state as well.
+
+**What a declaration changes**, all from one object for one connection:
+
+| | Without | With `ascii_full=1 float32_rt=1` |
+|---|---|---|
+| Display (`OdriveParameterFormat`, `OdriveParameterReader`) | A number of 9 or more characters is marked `may be cut off`, error bits in it are not decoded | The number as it is, and error bits decoded |
+| Basis of a review and the fresh check (`TryParseExactReply`) | A reply older firmware could have produced is refused | Every float reply is the float32 on the board |
+| Readback (`CompareReadback`) | Such a reply never verifies | The float32 values decide, what the reply looks like does not matter |
+
+- The display uses `ascii_full`. The basis and the readback need both flags: a float may be neither cut nor rounded.
+  A valid declaration without them rules out every float, however harmless a reply looks.
+- Error bits above bit 31 have no names yet. They show as the whole number with `above 32 bits, not decoded`.
+- The text of a value is worked out when it is shown, with what was declared on the connection it was read on. So a value
+  read before the check ended is redrawn without another read. The same firmware answered both. A value of an earlier
+  connection stays `outdated` and is never upgraded.
+- A review keeps the declaration it was made with, and the fresh check and the readback of that apply use the same
+  object. If the declaration changes while a review is waiting, the window drops the review and asks for a new one.
+- The firmware is not trusted with anything else: all guards of an apply stay, see below.
+
+**What this does not prove:** the tests run on the PC. `printf` is the PC's there, so `%.9g` in newlib-nano and the
+`%f` parser behind `w` have not been seen on a board. The declaration says what the firmware is built to do.
 
 ## Power supply data and editing Power / Brake
 
@@ -112,8 +176,9 @@ the review (`SerialOperationContext`). The serial worker checks them right befor
 new connection holds it back however late it comes. Requests without a context, such as profiles and the
 panel, keep their existing rules.
 
-**Replies older firmware could have produced** (`OdriveConfigValue.MayBeOlderFloatFormat`) are rounded or
-cut, and current firmware replies like that now and then, the two cannot be told apart. Such a reply:
+**Without a declaration of the firmware** ([Firmware capabilities](#firmware-capabilities)), replies older
+firmware could have produced (`OdriveConfigValue.MayBeOlderFloatFormat`) are in doubt, as they may be rounded or
+cut. Such a reply:
 
 - never counts as verified,
 - is no basis for relations or the write order. The review and the fresh check refuse it alike, and reading
@@ -121,7 +186,9 @@ cut, and current firmware replies like that now and then, the two cannot be told
   `-0.09999974`, older firmware replies `-0.100000`, and a `max_regen_current` of `0.0999999` would seem to
   fit,
 - is accepted only for the measured bus voltage, which moves by far more than its last digit between two
-  readings, and about 9 of 100 readings look like this.
+  readings.
+
+With a declaration none of this applies, and the current float32 values are used as they are.
 
 **Relations checked**, all taken from what the firmware does (`ODrive::do_fast_checks` in `main.cpp`,
 `update_brake_current` in `low_level.cpp`, the remarks in `odrive-interface.yaml`). No value is too high or
@@ -146,10 +213,8 @@ Each write is a state of its own, so the values go out in an order in which no s
   command source can change the state in between.
 - A stop requested in the instant between the worker's last check and the line cannot call that line back.
   The stop lines follow right behind it, and nothing else of the apply goes out.
-- On older firmware the review refuses, since nearly all its float replies look rounded. On current firmware
-  it refuses while one of the ten values has such a reply: about 9 of 100 arbitrary float32 values and about
-  7 of 100 values with three decimals (`32.012` reads `32.012001`), none with at most two decimals. A value
-  like that blocks the editor until a reboot restores the saved one, or something else changes it.
+- Without a declaration the review refuses while one of the ten values has a reply in doubt, which on older
+  firmware is nearly every float.
 - Only finite values can be entered, so `dc_max_positive_current` cannot go back to `inf` here. A reboot
   restores the saved value, as nothing is saved.
 - `enable_brake_resistor` takes effect only after a reboot, says the firmware interface. The review points
@@ -162,10 +227,10 @@ Befunde aus dem Abgleich, wichtig für die weiteren Teile von 1b. Maßgeblich is
 nicht der Web-Client:
 
 - **Ältere Firmware kürzt Antworten auf 9 Zeichen.** `cmd_read_property` schrieb in einen Puffer von 10 Byte,
-  `to_string` kürzte ohne Meldung. Aus dem Fehlercode `2147483648` wurde so `214748364`. Die Firmware ist korrigiert
-  (`docs/ROADMAP.md`, „Vollständige ASCII-Leseantworten“), das Plugin erkennt die Version aber noch nicht. Die Anzeige
-  markiert deshalb weiter jede Zahl ab 9 Zeichen und dekodiert sie nicht. **Für den Export heißt das:** Er braucht erst
-  die Firmware-Erkennung. Von einer älteren Firmware dürfen über `r` gelesene Werte nicht unbesehen in ein Backup.
+  `to_string` kürzte ohne Meldung. Aus dem Fehlercode `2147483648` wurde so `214748364`. The firmware is fixed
+  (`docs/ROADMAP.md`, „Vollständige ASCII-Leseantworten“) and says so through `sys.capabilities?`. Without that
+  declaration the display still marks every number of 9 or more characters. **For the export this means:** values read
+  through `r` may go into a backup only with a declaration on that connection, or marked as uncertain.
 - **Falsche Namen im Web-Client:** Er nennt die Stream-Protokolle `1 FIBRE`, `2 ASCII`, `3 ASCII_AND_STDOUT`,
   `4 STDOUT`. Die Firmware zählt `0 Fibre`, `1 Ascii`, `2 Stdout`, `3 AsciiAndStdout`. Der Katalog folgt der Firmware.
 - **Schreibbarkeit weicht ab:** `phase_resistance`, `phase_inductance`, `direction`, `phase_offset` und
