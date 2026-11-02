@@ -46,7 +46,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 if (!_values.ContainsKey(f.Path)) _values[f.Path] = "1";
             _values["sys.swver"] = "1.17.0";
             _values["sys.build"] = "abc branch=test";
+            foreach (var p in Catalog.Value.Parameters)
+                if (!_values.ContainsKey(p.Path)) _values[p.Path] = "0";
         }
+
+        private static readonly Lazy<OdriveParameterCatalog> Catalog
+            = new Lazy<OdriveParameterCatalog>(OdriveParameterCatalog.LoadEmbedded);
 
         // ---- Test controls ---------------------------------------------------
 
@@ -289,7 +294,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             switch (parts[0])
             {
                 case "r":
-                    Reply(_values.TryGetValue(parts[1], out var value) ? value : "invalid property");
+                    Reply(_values.TryGetValue(parts[1], out var value) ? CutLikeTheFirmware(value) : "invalid property");
                     break;
                 case "w":
                     ProcessOdriveWrite(parts[1], parts[2]);
@@ -302,6 +307,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
                     break;
             }
         }
+
+        // cmd_read_property has a 10-byte buffer, to_string cuts without any notice.
+        private static string CutLikeTheFirmware(string value)
+            => value.Length > OdriveProtocol.OdriveReadLimit ? value.Substring(0, OdriveProtocol.OdriveReadLimit) : value;
 
         private void ProcessOdriveWrite(string path, string value)
         {

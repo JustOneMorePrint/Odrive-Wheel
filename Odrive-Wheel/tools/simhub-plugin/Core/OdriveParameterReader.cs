@@ -1,0 +1,190 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace OdriveWheel.SimHubPlugin
+{
+    public enum ParameterReadState
+    {
+        NotRead,
+        /// <summary>Read on the connection that is up now.</summary>
+        Current,
+        /// <summary>The last read on this connection failed.</summary>
+        Failed,
+        /// <summary>Read on a connection that is gone. The board may have rebooted since.</summary>
+        Outdated,
+    }
+
+    public sealed class ParameterReading
+    {
+        internal ParameterReading(ParameterReadState state, string text, StatusSeverity severity,
+                                  DateTime? readAt, int connectGeneration)
+        {
+            State             = state;
+            Text              = text;
+            Severity          = severity;
+            ReadAt            = readAt;
+            ConnectGeneration = connectGeneration;
+        }
+
+        public ParameterReadState State { get; }
+        public string         Text     { get; }
+        public StatusSeverity Severity { get; }
+        /// <summary>Local time of the read, null unless the state is Current.</summary>
+        public DateTime?      ReadAt   { get; }
+        internal int ConnectGeneration { get; }
+    }
+
+    public sealed class ParameterRefreshResult
+    {
+        internal ParameterRefreshResult(int requested, int succeeded, int failed, string abortReason)
+        {
+            Requested   = requested;
+            Succeeded   = succeeded;
+            Failed      = failed;
+            AbortReason = abortReason;
+        }
+
+        public int Requested { get; }
+        public int Succeeded { get; }
+        public int Failed    { get; }
+        /// <summary>Why the rest was not read, null if every parameter was attempted.</summary>
+        public string AbortReason { get; }
+        public int NotReached => Requested - Succeeded - Failed;
+    }
+
+    /// <summary>
+    /// Reads catalog parameters on request and remembers what came back. A value is bound to the
+    /// connection it was read on, so it can never pass for the state of a board that may have
+    /// rebooted. This class can only read: it gets nothing but the read delegate. Safe to use
+    /// from any thread.
+    /// </summary>
+    public sealed class OdriveParameterReader
+    {
+        public delegate Task<ParameterResult> ReadParameter(ParameterDefinition parameter, CommandPriority priority,
+                                                            CancellationToken cancellation);
+
+        // Each one costs the read timeout plus the wait for the reply stream, so a silent board
+        // must not be asked for a whole tab.
+        internal const int MaxTimeoutsInARow = 2;
+
+        private static readonly ParameterReading NeverRead =
+            new ParameterReading(ParameterReadState.NotRead, "—", StatusSeverity.Neutral, null, -1);
+
+        private readonly ReadParameter _read;
+        private readonly Func<SerialStatus> _getStatus;
+        private readonly Func<CancellationToken> _getStopToken;
+        private readonly ConcurrentDictionary<string, ParameterReading> _readings
+            = new ConcurrentDictionary<string, ParameterReading>(StringComparer.Ordinal);
+        private int _version;
+
+        public OdriveParameterReader(ReadParameter read, Func<SerialStatus> getStatus, Func<CancellationToken> getStopToken)
+        {
+            _read         = read ?? throw new ArgumentNullException(nameof(read));
+            _getStatus    = getStatus ?? throw new ArgumentNullException(nameof(getStatus));
+            _getStopToken = getStopToken ?? throw new ArgumentNullException(nameof(getStopToken));
+        }
+
+        /// <summary>Changes with every stored result. The connection can change a reading too.</summary>
+        public int Version => Volatile.Read(ref _version);
+
+        /// <summary>What to show for this parameter right now.</summary>
+        public ParameterReading Get(ParameterDefinition parameter)
+        {
+            if (!_readings.TryGetValue(parameter.Path, out var reading)) return NeverRead;
+
+            var status = _getStatus();
+            if (status.IsConnected && reading.ConnectGeneration == status.ConnectGeneration) return reading;
+
+            // A failure belongs to its connection as well, it says nothing about this one.
+            return reading.State == ParameterReadState.Current
+                ? new ParameterReading(ParameterReadState.Outdated, "outdated (was " + reading.Text + ")",
+                                       StatusSeverity.Warning, null, reading.ConnectGeneration)
+                : NeverRead;
+        }
+
+        /// <summary>Reads the parameters one after the other. Ends early on a software stop, on
+        /// cancellation, on a lost connection and if the board stops answering, the result says why.</summary>
+        public async Task<ParameterRefreshResult> RefreshAsync(IReadOnlyList<ParameterDefinition> parameters,
+                                                               CommandPriority priority, CancellationToken cancellation)
+        {
+            int succeeded = 0, failed = 0, timeoutsInARow = 0;
+            string abortReason = null;
+
+            // The next stop cancels this token, a stop between two reads included.
+            var stopToken = _getStopToken();
+            using (var cancel = CancellationTokenSource.CreateLinkedTokenSource(stopToken, cancellation))
+            {
+                foreach (var parameter in parameters)
+                {
+                    if (cancel.IsCancellationRequested)
+                    {
+                        abortReason = CancelReason(stopToken);
+                        break;
+                    }
+
+                    // Taken before the read: if the connection changes during it, the value counts
+                    // for the old one and shows as outdated rather than as current.
+                    var status = _getStatus();
+                    if (!status.IsConnected)
+                    {
+                        abortReason = OdriveStatusText.Connection(status).Text;
+                        break;
+                    }
+
+                    var result = await _read(parameter, priority, cancel.Token).ConfigureAwait(false);
+
+                    // Nothing was learned, so the previous reading stays as it is.
+                    if (result.Status == ParameterStatus.Cancelled)
+                    {
+                        abortReason = CancelReason(stopToken);
+                        break;
+                    }
+
+                    timeoutsInARow = result.Status == ParameterStatus.Timeout ? timeoutsInARow + 1 : 0;
+                    if (Store(parameter, result, status.ConnectGeneration)) succeeded++;
+                    else failed++;
+
+                    if (result.Status == ParameterStatus.Unavailable)
+                    {
+                        abortReason = result.Detail ?? "no connection";
+                        break;
+                    }
+                    if (timeoutsInARow >= MaxTimeoutsInARow)
+                    {
+                        abortReason = "the board does not answer";
+                        break;
+                    }
+                }
+            }
+            return new ParameterRefreshResult(parameters.Count, succeeded, failed, abortReason);
+        }
+
+        private static string CancelReason(CancellationToken stopToken)
+            => stopToken.IsCancellationRequested ? "software stop" : "cancelled";
+
+        private bool Store(ParameterDefinition parameter, ParameterResult result, int connectGeneration)
+        {
+            bool ok = false;
+            ParameterReading reading;
+            if (result.IsOk)
+            {
+                var formatted = OdriveParameterFormat.Format(parameter, result.Value);
+                ok = formatted.IsValid;
+                reading = ok
+                    ? new ParameterReading(ParameterReadState.Current, formatted.Text, formatted.Severity, DateTime.Now, connectGeneration)
+                    : new ParameterReading(ParameterReadState.Failed, formatted.Text, formatted.Severity, null, connectGeneration);
+            }
+            else
+            {
+                reading = new ParameterReading(ParameterReadState.Failed, OdriveStatusText.ReadValue(parameter, result),
+                                               StatusSeverity.Warning, null, connectGeneration);
+            }
+            _readings[parameter.Path] = reading;
+            Interlocked.Increment(ref _version);
+            return ok;
+        }
+    }
+}
