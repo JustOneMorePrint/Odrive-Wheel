@@ -28,6 +28,19 @@ $(BUILD_DIR)/prod_arm_paths.inc: extract_prod_functions.sh ../../Odrive-Wheel/sr
 	@sh extract_prod_functions.sh > $@.tmp
 	@mv $@.tmp $@
 
+# Real formatters, real sink, real read path. With the math flags of the firmware (Odrive-Wheel/Makefile),
+# because -ffast-math changes what the usual ways of asking for the sign of a zero return.
+FIRMWARE = ../../ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware
+
+$(BUILD_DIR)/test_ascii_read: CXXFLAGS += -ffast-math -fno-finite-math-only -fno-math-errno -I$(BUILD_DIR) \
+	-isystem $(FIRMWARE)/fibre-cpp/include -isystem $(FIRMWARE)/fibre-cpp -isystem $(FIRMWARE)/communication
+$(BUILD_DIR)/test_ascii_read: $(BUILD_DIR)/prod_ascii_read.inc
+
+$(BUILD_DIR)/prod_ascii_read.inc: extract_prod_functions.sh $(FIRMWARE)/communication/ascii_protocol.cpp
+	@mkdir -p $(dir $@)
+	@sh extract_prod_functions.sh ascii-read > $@.tmp
+	@mv $@.tmp $@
+
 clean:
 	rm -rf $(BUILD_DIR)
 

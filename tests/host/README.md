@@ -31,6 +31,7 @@ Erfolgreicher Lauf:
 
 ```text
 test_arm_refusal.cpp: <n> checks, 0 failed
+test_ascii_read.cpp: <n> checks, 0 failed
 test_example_clamp.cpp: 5 checks, 0 failed
 test_flash_guard.cpp: <n> checks, 0 failed
 test_build_info.sh: <n> checks, 0 failed, 0 skipped
@@ -62,6 +63,22 @@ wird mit `NOT_FOUND` samt vollständiger Marke beantwortet. Die Befehlstabelle i
 weil `cmd_table.cpp` die HAL braucht. Der Test liest deshalb zusätzlich den Quelltext dieser Datei,
 die Klasse der Sync-Zeile darf dort nicht vorkommen. Die Weiche in `process_line`
 (`ascii_protocol.cpp`) ist nur durch Lesen geprüft, sie hängt am ODrive-Code.
+
+## ASCII-Leseantworten: `test_ascii_read.cpp`
+
+Prüft die Antwort auf `r <pfad>` vom Wert bis zu den Bytes, die den Sende-Puffer verlassen. Echt sind die
+Formatierer und Parser aus `fibre-cpp/protocol.hpp`, die Typ-Infos aus `fibre/introspection.hpp`, der
+`BufferedStreamSink` und `ascii_protocol.hpp`. `AsciiProtocol::respond` und `cmd_read_property` kommen als
+unveränderter Text über `extract_prod_functions.sh ascii-read`. Der Baum der Eigenschaften ist klein und
+nach dem Muster von `autogen/type_info.hpp` gebaut.
+
+Kompiliert wird mit den Math-Flags der Firmware. Mit `-ffast-math` wird `signbit()` zu einem Vergleich mit 0
+und erkennt eine negative Null nicht.
+
+**Grenzen:** Die Arbeit von `printf` macht hier die C-Bibliothek des PCs. Der Test belegt also die Logik darum
+und das Ergebnis eines korrekten `printf`, **nicht** das Verhalten von `%.9g` in newlib-nano auf dem Board.
+Nachgebildet wird davon nur, dass dort `%llu` und `%lld` fehlen. `process_line` läuft nicht mit, das braucht
+den größten Teil der Firmware.
 
 ## Tests der Build-Kennung (`sys.build?`)
 

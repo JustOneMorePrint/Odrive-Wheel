@@ -1,8 +1,8 @@
 #!/bin/sh
-# Prints the unchanged text of the production functions behind test_arm_refusal.cpp, with #line
-# directives so failures point into the real files. These files need the HAL as a whole, so the test
-# compiles only these functions, against the stand-ins in stubs/. A name that is not found is an
-# error: the test must never run against less than this list.
+# Prints the unchanged text of production functions, with #line directives so failures point into
+# the real files. Without an argument the list behind test_arm_refusal.cpp, with `ascii-read` the one
+# behind test_ascii_read.cpp. These files need the HAL as a whole, so the tests compile only these
+# functions. A name that is not found is an error: a test must never run against less than its list.
 #
 # PROD_ROOT reads another tree, the negative controls use that. Needs sh and awk.
 
@@ -11,9 +11,11 @@ export LC_ALL=C
 
 root=${PROD_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 motor_control=ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl
+communication=ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/communication
 
 # A definition starts in column 0, either as `struct <name>` or with its name before the first
-# parenthesis, and ends with a closing brace in column 0.
+# parenthesis, and ends with a closing brace in column 0. A template header on the line above
+# belongs to it.
 extract() {
     file=$1
     shift
@@ -36,13 +38,18 @@ extract() {
             if (name in missing) {
                 delete missing[name]
                 copying = 1
-                printf "#line %d \"%s\"\n", FNR, shown
+                if (previous ~ /^template</) {
+                    printf "#line %d \"%s\"\n%s\n", FNR - 1, shown, previous
+                } else {
+                    printf "#line %d \"%s\"\n", FNR, shown
+                }
             }
         }
         if (copying) {
             print
             if ($0 ~ /^}/) copying = 0
         }
+        previous = $0
     }
     END {
         failed = 0
@@ -53,6 +60,11 @@ extract() {
         exit failed
     }' "$root/$file"
 }
+
+if [ "${1:-}" = ascii-read ]; then
+    extract "$communication/ascii_protocol.cpp" AsciiProtocol::respond AsciiProtocol::cmd_read_property
+    exit 0
+fi
 
 extract "$motor_control/utils.cpp" SVM
 
