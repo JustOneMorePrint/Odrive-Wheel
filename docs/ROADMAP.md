@@ -30,6 +30,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | 5 | Stromregler | ☐ |
 | 6 | Encoder und Anticogging | ☐ |
 | 7 | Beobachter und Hands-off | ☐ |
+| S1 | Flash-Schutz in der Firmware, siehe unten | ☐ |
 
 Reihenfolge: 0, dann 1. Danach beliebig. Ausführliche Spezifikationen der Pakete
 liegen unter `docs/packages/PKGn.md` und werden vor dem Start des jeweiligen Pakets
@@ -45,6 +46,7 @@ angelegt.
 | 5 | `0x0680–0x06BF` | `cur.*` | – |
 | 6 | `0x06C0–0x06FF` | `enc.*` | Flash-Sektor 9 (`0x080A0000`, 128 KB) |
 | 7 | `0x0700–0x073F` | `obs.*` | – |
+| S1 | – | `safe.*` | – |
 | Reserve | `0x0740–0x07FF` | – | – |
 
 Bereits belegt (nicht verwenden): `0x0000–0x0004`, `0x00FF`, `0x0100–0x0106`,
@@ -139,6 +141,37 @@ Kein Feature-Paket, sondern Vorbereitung. Ändert kein Fahrverhalten.
 | J und b als Parameter | Läuft auch ohne Paket 2 | `cmd_table.cpp` (`obs.*`), `eeprom_addresses.*` |
 | Hands-off-Erkennung und -Reaktion am Drehmoment-Sollwert | Rad schlägt beim Loslassen nicht aus | `observer.*`, Bridge |
 | Bedienung, Status | – | Plugin: Steuerelement |
+
+## S1 – Flash-Schutz in der Firmware
+
+Reiner Schutz ohne Schalter, vom Nutzer freigegebene Ausnahme von Regel 1. Setzt kein anderes
+Paket voraus. Wo dieser Schritt und mögliche weitere Sicherheits- und Messschritte in der
+Reihenfolge stehen, ist noch nicht entschieden.
+
+Beim Schreiben oder Löschen steht die CPU, weil sie ihren Code aus demselben Flash holt, und mit ihr
+der Regel-Interrupt. Die PWM bleibt dann auf dem letzten Wert, und niemand regelt den Strom. Deshalb:
+
+- **Keine Flash-Operation, solange ein Motor aktiv ist.** Aktiv heißt auf irgendeiner Achse: Motor
+  scharf, angeforderter Zustandswechsel noch nicht übernommen oder Achse nicht in IDLE.
+- **Kein Armen während einer Flash-Operation.** `Motor::arm` verweigert, die Achse landet ohne
+  Fehlercode wieder in IDLE.
+
+| Weg | Bei aktivem Motor |
+|---|---|
+| `sys.save!`, `sys.save?` | Antwort `ERR`, `sys.savestat?` bleibt unverändert |
+| `sys.eetest!`, `sys.eetest?` | Antwort `ERR` |
+| `sys.eedump?` | Antwort `ERR`. Der Befehl schreibt trotz `?`: `EE_Init` und ein Testwert |
+| `sys.eeformat!`, `sys.eeformat?` | Antwort `ERR` |
+| `se` | Keine Wirkung und keine Antwort, wie `ss` |
+| `ss` | Unverändert, der Schutz stammt aus der Original-ODrive-Firmware |
+
+`safe.status?` liefert `now=<allowed|busy|armed|requested|active> blocked=<n> last=<none|busy|armed|requested|active> armrefused=<n>`:
+was jetzt gälte, wie viele Flash-Operationen seit dem Start abgelehnt wurden, der letzte Grund und
+wie viele Armen-Versuche in eine Flash-Operation fielen.
+
+Mit allen Achsen in IDLE verhalten sich die Befehle wie bisher. Beim Booten läuft
+`ffb_init_storage_early` weiter ohne Schutz, die Achsen-Threads starten erst danach. Neue
+Flash-Aufrufe fallen in `tests/host/test_flash_paths.sh` auf.
 
 ## Optionale Verzahnungen
 

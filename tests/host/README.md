@@ -31,8 +31,10 @@ Erfolgreicher Lauf:
 
 ```text
 test_example_clamp.cpp: 5 checks, 0 failed
+test_flash_guard.cpp: <n> checks, 0 failed
 test_build_info.sh: <n> checks, 0 failed, 0 skipped
 test_make_clean.sh: <n> checks, 0 failed
+test_flash_paths.sh: <n> checks, 0 failed
 ```
 
 Schlägt ein Check fehl, stehen Datei und Zeile in der Ausgabe, und `make` endet mit
@@ -94,3 +96,21 @@ Unter Windows, in der Shell „MSYS2 MINGW64“ und mit denselben Voraussetzunge
 ```bash
 MAKE=mingw32-make sh tests/host/check_firmware_clean.sh
 ```
+
+## Flash-Schutz
+
+Keine Flash-Operation bei aktivem Motor, kein Armen während einer Flash-Operation (`docs/ROADMAP.md`,
+S1).
+
+| Datei | Prüft | Voraussetzung |
+|---|---|---|
+| `test_flash_guard.cpp` | Die Entscheidung `Odrive-Wheel/src/flash_guard.c` über alle Achsen-Zustände, beide Reihenfolgen des Wettlaufs mit dem Armen, und über den echten Parser die Antwort `ERR`, an der Plugin und Web-Client eine Ablehnung erkennen | g++ |
+| `test_flash_paths.sh` (läuft mit `check`) | Jeder Aufruf, der das Flash schreiben oder löschen kann, gegen die geprüfte Liste `flash_paths.expected`, mit Datei, Funktion und Anzahl. Dazu die Position des Schutzes in jedem Pfad zur Laufzeit und in `Motor::arm` | sh, awk, grep, find, sort |
+
+`test_flash_paths.sh` prüft Quelltext, weil dieser Code die HAL braucht. Ob der Schutz am Board wirkt,
+zeigt nur der Test in der PR-Beschreibung.
+
+Schlägt der Listenvergleich fehl, ist ein Flash-Aufruf neu oder hat sich verschoben. Dann zuerst
+entscheiden, ob er bei aktivem Motor laufen kann. Falls ja, gehört er zwischen
+`odrive_bridge_flash_begin()` und `odrive_bridge_flash_end()`, und `test_flash_paths.sh` muss diesen
+Pfad prüfen. Erst danach die Liste anpassen, den aktuellen Stand zeigt `sh test_flash_paths.sh --print`.
