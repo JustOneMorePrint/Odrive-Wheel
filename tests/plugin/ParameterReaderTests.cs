@@ -74,6 +74,19 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.Equal("100.00000 A", Shown("axis0.motor.config.current_lim", "100.00000"), "here only decimals are gone");
         }
 
+        // What newer firmware sends. The warnings stay, the plugin cannot tell the versions apart yet.
+        public static void Test_the_format_of_newer_firmware_is_understood()
+        {
+            Check.Equal("25 A", Shown("axis0.motor.config.current_lim", "25"), "whole number");
+            Check.Equal("-0 A", Shown("axis0.motor.config.current_lim", "-0"), "negative zero");
+            Check.Equal("-inf A", Shown("axis0.motor.config.current_lim", "-inf"), "infinity");
+            Check.Equal("1.23450002e-05 henry", Shown("axis0.motor.config.phase_inductance", "1.23450002e-05"), "scientific notation");
+            Check.Equal("1e+09 A", Shown("axis0.motor.config.current_lim", "1e+09"), "short scientific notation");
+            Check.Equal("2147483648 (may be cut off, not decoded)", Shown("axis0.motor.error", "2147483648"), "whole error bits");
+            Check.Equal("281474976710655 (may be cut off)", Shown("serial_number", "281474976710655"), "whole serial number");
+            Check.Equal("123456792 A (may be cut off)", Shown("axis0.motor.config.current_lim", "123456792"), "nine digits without a point");
+        }
+
         public static void Test_a_reply_of_the_wrong_kind_is_no_value()
         {
             foreach (var path in new[] { "axis0.motor.config.current_lim", "axis0.motor.config.pole_pairs", "config.enable_brake_resistor",

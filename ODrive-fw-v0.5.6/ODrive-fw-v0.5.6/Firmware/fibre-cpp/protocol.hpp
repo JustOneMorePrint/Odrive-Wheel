@@ -179,10 +179,29 @@ template<> struct format_traits_t<unsigned char> { using type = void;
     using scn_type = unsigned int;
 };
 
+// Odrive-Wheel patch: the formatters report success only if the whole value fit. A shortened number
+// looks like a valid one, so after a failure the buffer holds an empty string, if it has any room.
+//
+// Room for the longest result, terminator included: 20 characters for -9223372036854775808 and
+// 18446744073709551615. A float32 needs at most 15, -1.17549435e-38.
+static constexpr size_t TO_STRING_BUFFER_SIZE = 21;
+
+static inline bool to_string_fits(int needed, char * buffer, size_t length) {
+    if (needed >= 0 && static_cast<size_t>(needed) < length) return true;
+    if (length > 0) buffer[0] = '\0';
+    return false;
+}
+
+static inline bool to_string_copy(const char * text, char * buffer, size_t length) {
+    const size_t needed = strlen(text);
+    if (!to_string_fits(static_cast<int>(needed), buffer, length)) return false;
+    memcpy(buffer, text, needed + 1);
+    return true;
+}
+
 template<typename T, typename = typename format_traits_t<T>::type>
 static bool to_string(const T& value, char * buffer, size_t length, int) {
-    snprintf(buffer, length, format_traits_t<T>::fmtp, value);
-    return true;
+    return to_string_fits(snprintf(buffer, length, format_traits_t<T>::fmtp, value), buffer, length);
 }
 // Phase 4.x — Odrive-Wheel patch: newlib-nano (que estamos linkando via
 // -specs=nano.specs) não suporta '%llu' / '%lld'. snprintf devolve literalmente
@@ -199,7 +218,7 @@ static bool to_string(const unsigned long long& value, char * buffer, size_t len
         while (v > 0 && idx > 0) { tmp[--idx] = '0' + (char)(v % 10); v /= 10; }
     }
     size_t n = 20 - idx;
-    if (n + 1 > length) n = length - 1;
+    if (!to_string_fits(static_cast<int>(n), buffer, length)) return false;
     for (size_t i = 0; i < n; ++i) buffer[i] = tmp[idx + i];
     buffer[n] = '\0';
     return true;
@@ -210,22 +229,34 @@ static bool to_string(const long long& value, char * buffer, size_t length, int)
     if (value < 0) {
         if (length < 2) { buffer[0] = '\0'; return false; }
         buffer[0] = '-';
-        return to_string<unsigned long long>(
+        const bool fits = to_string<unsigned long long>(
             (unsigned long long)(-(value + 1)) + 1ULL, buffer + 1, length - 1, 0);
+        if (!fits) buffer[0] = '\0';
+        return fits;
     }
     return to_string<unsigned long long>((unsigned long long)value, buffer, length, 0);
 }
-// Special case for float because printf promotes float to double, and we get warnings
+// Odrive-Wheel patch: %.9g instead of %f. Nine significant digits are what a float32 needs to read
+// back as the same value, the six decimals of %f turned small values into 0.000000. The result can
+// be in scientific notation, like 1.17549435e-38.
+//
+// Zero, infinity and NaN go by their bits: -ffast-math makes signbit() useless for a negative zero,
+// and this way the result does not depend on printf. Sign bit first, then the magnitude.
 template<typename T = float>
 static bool to_string(const float& value, char * buffer, size_t length, int) {
-    snprintf(buffer, length, "%f", (double)value);
-    return true;
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    const bool negative = (bits & 0x80000000u) != 0;
+    const uint32_t magnitude = bits & 0x7FFFFFFFu;
+    if (magnitude > 0x7F800000u) return to_string_copy("nan", buffer, length);
+    if (magnitude == 0x7F800000u) return to_string_copy(negative ? "-inf" : "inf", buffer, length);
+    if (magnitude == 0) return to_string_copy(negative ? "-0" : "0", buffer, length);
+    // The cast is there because printf promotes float to double, and we get warnings
+    return to_string_fits(snprintf(buffer, length, "%.9g", (double)value), buffer, length);
 }
 template<typename T = bool>
 static bool to_string(const bool& value, char * buffer, size_t length, int) {
-    buffer[0] = value ? '1' : '0';
-    buffer[1] = 0;
-    return true;
+    return to_string_copy(value ? "1" : "0", buffer, length);
 }
 template<typename T>
 static bool to_string(const T& value, char * buffer, size_t length, ...) {

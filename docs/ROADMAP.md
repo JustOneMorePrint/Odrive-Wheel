@@ -33,6 +33,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | 6 | Encoder und Anticogging | ☐ |
 | 7 | Beobachter und Hands-off | ☐ |
 | S1 | Flash-Schutz in der Firmware, siehe unten | ☐ in `main`, Hardwaretests offen |
+| – | Vollständige ASCII-Leseantworten, siehe unten | ☐ umgesetzt, am Board ungeprüft |
 
 Die Hardwaretests zu 1a und S1 sind auf Wunsch des Nutzers bis nach weiteren Integrationen
 verschoben. Bis dahin sind beide Punkte nicht am Board nachgewiesen und bleiben ohne ☑.
@@ -230,6 +231,32 @@ nur bei nachweislich inaktiven Achsen.
 Statusabfragen weisen die Wirkung der Sperre nicht nach. Auch nach T2 und T3 bleibt am Board ungeprüft, ob die gebaute
 Firmware bei aktivem Motor wirklich ablehnt und ob `Motor::arm` während einer Flash-Operation verweigert. Ein möglicher
 zusätzlicher Versuch ist im PR beschrieben und nicht ausgeführt.
+
+## Vollständige ASCII-Leseantworten
+
+Eng begrenzte Korrektur in `fibre-cpp/protocol.hpp` und `communication/ascii_protocol.cpp`, ohne Schalter. Sie betrifft
+nur die Antwort auf `r <pfad>`. Eine Zahl, die zu lang für den Puffer ist, war vorher eine erfolgreiche, gekürzte Antwort.
+
+| Wert | Vorher | Jetzt |
+|---|---|---|
+| Ganzzahl, 64 Bit, Bool | höchstens 9 Zeichen, längere gekürzt: `2147483648` wurde zu `214748364` | vollständig, bis `-9223372036854775808` |
+| `float32` | `%f` mit höchstens 9 Zeichen: `25.000000`, `1.17549435e-38` wurde zu `0.000000` | `%.9g`, rücklesbar: `25`, `0.100000001`, `1.17549435e-38` |
+| Null | `0.000000`, `-0.000000` | `0`, `-0` |
+| Unendlich, NaN | `inf`, `-inf`, `nan` | `inf`, `-inf`, `nan` |
+
+Einheiten und Bedeutung der Werte bleiben gleich. Wer eine Antwort auswertet, muss auch die wissenschaftliche
+Schreibweise verstehen. Fehlerantworten sind unverändert. Das OpenFFBoard-Protokoll (`?`, `=`, `!`) ist nicht betroffen.
+
+Die Formatierer melden Erfolg nur noch, wenn der ganze Wert passt, sonst steht im Puffer eine leere Zeichenkette.
+`TO_STRING_BUFFER_SIZE` ist auf den längsten Wert ausgelegt. Die 64-Bit-Umwandlung bleibt von Hand geschrieben, weil
+newlib-nano weder `%llu` noch `%lld` kennt.
+
+Das Plugin bleibt absichtlich vorsichtig: Es erkennt die Firmware noch nicht und markiert jede Zahl ab 9 Zeichen als
+möglicherweise gekürzt. Firmware-Erkennung und Export/Import folgen später.
+
+**Nachweisstand:** `tests/host/test_ascii_read.cpp` führt die echten Formatierer, den echten Antwortweg und den echten
+Sende-Puffer auf dem PC aus. Die Arbeit von `printf` macht dort die C-Bibliothek des PCs. Am Board ungeprüft ist deshalb,
+ob `%.9g` in newlib-nano dieselben Texte liefert und ob die Werte dort wirklich rücklesbar sind.
 
 ## Optionale Verzahnungen
 

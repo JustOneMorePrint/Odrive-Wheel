@@ -82,10 +82,11 @@ nur die acht Werte mit `"poll": true`.
 Befunde aus dem Abgleich, wichtig für die weiteren Teile von 1b. Maßgeblich ist das Firmware-Interface,
 nicht der Web-Client:
 
-- **Antworten sind auf 9 Zeichen begrenzt.** `cmd_read_property` schreibt in einen Puffer von 10 Byte,
-  `to_string` kürzt ohne Meldung. Aus dem Fehlercode `2147483648` wird so `214748364`. Die Anzeige markiert
-  jede Zahl, die den Platz ausfüllt, und dekodiert sie nicht. **Für den Export heißt das:** Über `r` gelesene
-  große Zahlen und die Seriennummer kommen gekürzt an und dürfen nicht unbesehen in ein Backup.
+- **Ältere Firmware kürzt Antworten auf 9 Zeichen.** `cmd_read_property` schrieb in einen Puffer von 10 Byte,
+  `to_string` kürzte ohne Meldung. Aus dem Fehlercode `2147483648` wurde so `214748364`. Die Firmware ist korrigiert
+  (`docs/ROADMAP.md`, „Vollständige ASCII-Leseantworten“), das Plugin erkennt die Version aber noch nicht. Die Anzeige
+  markiert deshalb weiter jede Zahl ab 9 Zeichen und dekodiert sie nicht. **Für den Export heißt das:** Er braucht erst
+  die Firmware-Erkennung. Von einer älteren Firmware dürfen über `r` gelesene Werte nicht unbesehen in ein Backup.
 - **Falsche Namen im Web-Client:** Er nennt die Stream-Protokolle `1 FIBRE`, `2 ASCII`, `3 ASCII_AND_STDOUT`,
   `4 STDOUT`. Die Firmware zählt `0 Fibre`, `1 Ascii`, `2 Stdout`, `3 AsciiAndStdout`. Der Katalog folgt der Firmware.
 - **Schreibbarkeit weicht ab:** `phase_resistance`, `phase_inductance`, `direction`, `phase_offset` und
