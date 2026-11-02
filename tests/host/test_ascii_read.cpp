@@ -340,12 +340,17 @@ static void test_a_finite_float_reads_back_as_the_same_float() {
 }
 
 static void test_the_named_size_holds_every_value() {
+    // In their exact types, like the type infos pass them: INT64_MIN is a long on Linux.
+    const unsigned long long u64_max = UINT64_MAX;
+    const long long i64_min = INT64_MIN;
+    const float longest_float = -FLT_MIN;
+
     char buffer[64];
-    CHECK(to_string<unsigned long long>(UINT64_MAX, buffer, TO_STRING_BUFFER_SIZE, 0));
-    CHECK(to_string<long long>(INT64_MIN, buffer, TO_STRING_BUFFER_SIZE, 0));
-    CHECK(to_string<float>(-FLT_MIN, buffer, TO_STRING_BUFFER_SIZE, 0));
-    CHECK(!to_string<unsigned long long>(UINT64_MAX, buffer, TO_STRING_BUFFER_SIZE - 1, 0));
-    CHECK(!to_string<long long>(INT64_MIN, buffer, TO_STRING_BUFFER_SIZE - 1, 0));
+    CHECK(to_string(u64_max, buffer, TO_STRING_BUFFER_SIZE, 0));
+    CHECK(to_string(i64_min, buffer, TO_STRING_BUFFER_SIZE, 0));
+    CHECK(to_string(longest_float, buffer, TO_STRING_BUFFER_SIZE, 0));
+    CHECK(!to_string(u64_max, buffer, TO_STRING_BUFFER_SIZE - 1, 0));
+    CHECK(!to_string(i64_min, buffer, TO_STRING_BUFFER_SIZE - 1, 0));
 }
 
 static void test_a_read_answers_with_the_whole_value_and_line_end() {
