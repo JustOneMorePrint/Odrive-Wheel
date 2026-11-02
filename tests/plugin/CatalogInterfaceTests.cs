@@ -21,7 +21,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         private static OdriveParameterCatalog Catalog => OdriveParameterCatalog.LoadEmbedded();
 
-        private static string FromRepoRoot(string relativePath)
+        internal static string FromRepoRoot(string relativePath)
         {
             for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
             {

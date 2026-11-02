@@ -95,16 +95,19 @@ namespace OdriveWheel.SimHubPlugin
         }
 
         /// <summary>
-        /// A reply as a value that relations and a write order can rest on. A reply older firmware could have
-        /// produced does not qualify, however it parses: the value may be rounded or cut, and reading the same
-        /// text again settles nothing. Current firmware replies like that only now and then, see
-        /// <see cref="MayBeOlderFloatFormat"/>, and it counts just the same as the two cannot be told apart.
+        /// A reply as a value that relations and a write order can rest on. If the firmware of this connection
+        /// declared that floats are exact, any float it replies is. Without a declaration a reply older firmware
+        /// could have produced does not qualify, however it parses: the value may be rounded or cut, and reading
+        /// the same text again settles nothing. A declaration that leaves it out rules out every float.
         /// </summary>
-        public static bool TryParseExactReply(ParameterDefinition parameter, string reply, out double value)
+        public static bool TryParseExactReply(ParameterDefinition parameter, string reply, FirmwareCapabilities capabilities, out double value)
         {
             value = 0.0;
-            return reply != null
-                && !OdriveParameterFormat.Format(parameter, reply).MayBeCutOff
+            if (reply == null) return false;
+            if (parameter.Type == ParameterType.Float && capabilities != null)
+                return capabilities.FloatsAreExact && TryParseReply(parameter, reply, out value);
+
+            return !OdriveParameterFormat.Format(parameter, reply, capabilities).MayBeCutOff
                 && !MayBeOlderFloatFormat(reply)
                 && TryParseReply(parameter, reply, out value);
         }
@@ -133,9 +136,14 @@ namespace OdriveWheel.SimHubPlugin
             return true;
         }
 
-        /// <summary>Compares what a read returned with what was written. <paramref name="detail"/> says why,
-        /// unless it is verified.</summary>
+        /// <summary>Compares what a read returned with what was written, without a declaration of the firmware.</summary>
         public static ReadbackVerdict CompareReadback(ParameterDefinition parameter, string commandValue, string reply, out string detail)
+            => CompareReadback(parameter, commandValue, reply, null, out detail);
+
+        /// <summary>Compares what a read returned with what was written. <paramref name="detail"/> says why,
+        /// unless it is verified. With floats declared exact the float32 values decide, what the reply looks
+        /// like does not matter.</summary>
+        public static ReadbackVerdict CompareReadback(ParameterDefinition parameter, string commandValue, string reply, FirmwareCapabilities capabilities, out string detail)
         {
             detail = null;
             if (parameter.Type == ParameterType.Boolean)
@@ -157,7 +165,13 @@ namespace OdriveWheel.SimHubPlugin
                 return reply == "nan" ? ReadbackVerdict.Differs : ReadbackVerdict.NotVerified;
             }
 
-            if (!MayBeOlderFloatFormat(reply))
+            if (capabilities != null && !capabilities.FloatsAreExact)
+            {
+                detail = "the firmware does not declare exact floats, the reply was " + reply;
+                return ReadbackVerdict.NotVerified;
+            }
+
+            if (capabilities != null || !MayBeOlderFloatFormat(reply))
             {
                 if (actual == expected) return ReadbackVerdict.Verified;
                 detail = "the board reports " + reply;
@@ -185,7 +199,8 @@ namespace OdriveWheel.SimHubPlugin
         /// Could this reply come from older firmware? That one wrote %f into 10 bytes: always six decimals,
         /// or fewer if the 9 characters ran out. Newer firmware writes %.9g, which has no trailing zeros, an
         /// exponent where that is shorter, and can be longer than 9 characters. So only replies in the common
-        /// range are in doubt, and those count as older, even if newer firmware can produce them too.
+        /// range are in doubt, and those count as older, even if newer firmware can produce them too: only a
+        /// declaration through sys.capabilities? tells the two apart.
         /// </summary>
         internal static bool MayBeOlderFloatFormat(string reply)
         {

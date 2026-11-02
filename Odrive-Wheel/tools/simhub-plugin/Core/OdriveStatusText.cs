@@ -132,6 +132,26 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
+        /// <summary>What the firmware on this connection has declared about its replies.</summary>
+        public static StatusLine Capabilities(FirmwareCapabilityStatus status, bool connected)
+        {
+            const string title = "Firmware replies: ";
+            const string careful = "Long numbers may be cut off, and values that may be rounded are refused for editing.";
+
+            switch (status.State)
+            {
+                case FirmwareCapabilityState.Declared:
+                    if (status.Capabilities.FloatsAreExact)
+                        return new StatusLine(title + "declared complete and exact on this connection.", StatusSeverity.Ok);
+                    return new StatusLine(title + "the firmware declares "
+                                        + (status.Capabilities.AsciiFull ? "complete numbers, but no exact floats. " : "no complete numbers. ") + careful, StatusSeverity.Warning);
+                case FirmwareCapabilityState.NotDeclared:
+                    return new StatusLine(title + "nothing declared (" + status.Detail + "). " + careful, StatusSeverity.Warning);
+                default:
+                    return new StatusLine(title + (connected ? "checking…" : "no connection."), StatusSeverity.Neutral);
+            }
+        }
+
         /// <summary>A read result for the parameter lists. A failed read never looks like "no error".</summary>
         public static string ReadValue(ParameterDefinition definition, ParameterResult result)
         {

@@ -293,7 +293,8 @@ namespace OdriveWheel.SimHubPlugin
             if (_applying) return;
             var selected = _powerBrakeFields.Where(f => f.Select.IsChecked == true)
                                             .ToDictionary(f => f.Parameter.Path, f => f.Input, StringComparer.Ordinal);
-            _review = OdrivePowerBrakeEditor.Review(_catalog, _reader.Get, _serial.GetStatus(), selected);
+            var status = _serial.GetStatus();
+            _review = OdrivePowerBrakeEditor.Review(_catalog, _reader.Get, status, selected, _capabilities?.For(status));
             ReviewText.Text        = OdriveStatusText.RamReview(_review);
             ReviewText.Foreground  = _review.CanApply ? BrushNeutral : BrushWarn;
             ApplyButton.IsEnabled  = _review.CanApply;
@@ -311,9 +312,13 @@ namespace OdriveWheel.SimHubPlugin
         private void DropReviewIfOutdated(SerialStatus status)
         {
             if (_review == null || _applying) return;
-            if (status.IsConnected && status.ConnectGeneration == _review.ConnectGeneration && status.LastStop == _review.LastStop) return;
+            bool sameOperation = status.IsConnected && status.ConnectGeneration == _review.ConnectGeneration && status.LastStop == _review.LastStop;
+            bool sameDeclaration = _review.Capabilities == _capabilities?.For(status);
+            if (sameOperation && sameDeclaration) return;
             DropReview();
-            ReviewText.Text = "The connection or the stop state changed, review again.";
+            ReviewText.Text = sameOperation
+                ? "The firmware has declared what its replies guarantee, review again."
+                : "The connection or the stop state changed, review again.";
             ReviewText.Foreground = BrushWarn;
         }
 

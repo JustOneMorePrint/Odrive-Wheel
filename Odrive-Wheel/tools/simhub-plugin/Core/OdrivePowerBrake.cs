@@ -149,7 +149,7 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>What goes on the line, which is the float32 the firmware will store.</summary>
         public string CommandValue { get; }
         public double NewValue     { get; }
-        public string NewText => OdriveParameterFormat.Format(Parameter, CommandValue).Text;
+        public string NewText => OdriveParameterFormat.Format(Parameter, CommandValue, whole: true).Text;
     }
 
     /// <summary>The checked outcome of the selected inputs. Nothing can be applied without one.</summary>
@@ -157,7 +157,8 @@ namespace OdriveWheel.SimHubPlugin
     {
         internal PowerBrakeReview(IReadOnlyList<string> errors, IReadOnlyList<PowerBrakeChange> changes, IReadOnlyList<string> unchanged,
                                   IReadOnlyList<string> notes, IReadOnlyDictionary<string, string> reviewedReplies,
-                                  IReadOnlyList<ParameterDefinition> group, int connectGeneration, StopTicket lastStop)
+                                  IReadOnlyList<ParameterDefinition> group, int connectGeneration, StopTicket lastStop,
+                                  FirmwareCapabilities capabilities = null)
         {
             Errors = errors;
             Changes = changes;
@@ -167,6 +168,7 @@ namespace OdriveWheel.SimHubPlugin
             Group = group;
             ConnectGeneration = connectGeneration;
             LastStop = lastStop;
+            Capabilities = capabilities;
         }
 
         public IReadOnlyList<string> Errors { get; }
@@ -181,6 +183,8 @@ namespace OdriveWheel.SimHubPlugin
         internal IReadOnlyList<ParameterDefinition> Group { get; }
         internal int ConnectGeneration { get; }
         internal StopTicket LastStop { get; }
+        /// <summary>The declaration this review rests on, for all that follows from it. Null if there was none.</summary>
+        internal FirmwareCapabilities Capabilities { get; }
     }
 
     public static class OdrivePowerBrakeEditor
@@ -194,11 +198,14 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>
         /// Checks the selected inputs against what was last read. All values of the group must have been read
         /// on this connection and be clear, because the relations between them cannot be judged otherwise.
-        /// Sends nothing.
+        /// A declaration of the firmware counts only for the connection it was made on. Sends nothing.
         /// </summary>
         public static PowerBrakeReview Review(OdriveParameterCatalog catalog, Func<ParameterDefinition, ParameterReading> reading,
-                                              SerialStatus status, IReadOnlyDictionary<string, string> selectedInputs)
+                                              SerialStatus status, IReadOnlyDictionary<string, string> selectedInputs,
+                                              FirmwareCapabilities capabilities = null)
         {
+            if (capabilities != null && !capabilities.BelongsTo(status)) capabilities = null;
+
             var group = EditableParameters(catalog);
             var errors = new List<string>();
             var changes = new List<PowerBrakeChange>();
@@ -216,8 +223,8 @@ namespace OdriveWheel.SimHubPlugin
                 var shown = reading(parameter);
                 if (shown.State != ParameterReadState.Current)
                     errors.Add(parameter.Path + ": no current value, press Refresh first.");
-                else if (!OdriveConfigValue.TryParseExactReply(parameter, shown.RawValue, out double value))
-                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + "), older firmware may have rounded or cut it.");
+                else if (!OdriveConfigValue.TryParseExactReply(parameter, shown.RawValue, capabilities, out double value))
+                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + "). The firmware has not declared exact values on this connection, so it may be rounded or cut.");
                 else
                 {
                     replies[parameter.Path] = shown.RawValue;
@@ -263,7 +270,7 @@ namespace OdriveWheel.SimHubPlugin
                 if (errors.Count == 0) notes.AddRange(OdrivePowerBrakeRules.Notes(final, changes.Select(c => c.Parameter.Path)));
             }
 
-            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop);
+            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop, capabilities);
         }
     }
 }

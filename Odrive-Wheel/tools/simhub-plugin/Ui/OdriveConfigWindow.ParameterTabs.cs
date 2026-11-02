@@ -50,7 +50,7 @@ namespace OdriveWheel.SimHubPlugin
         private readonly Dictionary<string, TextBlock> _refreshSummaries = new Dictionary<string, TextBlock>();
         private readonly Dictionary<string, Button> _refreshButtons = new Dictionary<string, Button>();
 
-        private (int Version, int Generation, bool Connected) _shownState = (-1, -1, false);
+        private (int Version, int CapabilityVersion, int Generation, bool Connected) _shownState = (-1, -1, -1, false);
         private bool _refreshing;
 
         /// <summary>The text shown for a parameter, for tests.</summary>
@@ -99,10 +99,10 @@ namespace OdriveWheel.SimHubPlugin
             foreach (var button in _refreshButtons.Values) button.IsEnabled = enabled;
         }
 
-        // A lost connection changes what the rows must say without any new read.
+        // A lost connection or a declaration of the firmware changes what the rows must say without any new read.
         private void UpdateParameterRows(SerialStatus status)
         {
-            var state = (_reader.Version, status.ConnectGeneration, status.IsConnected);
+            var state = (_reader.Version, _capabilities?.Version ?? 0, status.ConnectGeneration, status.IsConnected);
             if (state == _shownState) return;
             _shownState = state;
 

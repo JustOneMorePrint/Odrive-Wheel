@@ -18,13 +18,28 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public FakeBoard Board => Rig.Board;
         public OdriveParameterReader Reader { get; }
         public OdriveRamApplier Applier { get; }
+        /// <summary>Null unless the rig stands for current firmware.</summary>
+        public OdriveCapabilityDetector Detector { get; }
 
-        public PowerBrakeRig(Func<Rig, IOdriveParameters> parameters = null)
+        /// <param name="declared">The board declares its replies, and the rig has seen that before it reads.</param>
+        public PowerBrakeRig(Func<Rig, IOdriveParameters> parameters = null, bool declared = false, Action<FakeBoard> prepare = null)
         {
-            Rig = new Rig(prepare: PrepareBoard);
+            Rig = new Rig(prepare: board =>
+            {
+                PrepareBoard(board);
+                prepare?.Invoke(board);
+                if (declared) board.BecomeCurrentFirmware();
+            });
+            if (declared)
+            {
+                Detector = new OdriveCapabilityDetector(Rig.Service, Rig.Parameters);
+                Detector.Start();
+                Check.True(Wait.Until(() => Detector.Status.State == FirmwareCapabilityState.Declared), "the firmware should be recognised");
+            }
             Reader = new OdriveParameterReader(
                 (p, priority, cancellation) => Rig.Parameters.ReadAsync(p.Path, p.Protocol, priority, cancellation),
-                Rig.Service.GetStatus);
+                Rig.Service.GetStatus,
+                Detector != null ? Detector.For : (Func<int, FirmwareCapabilities>)null);
             Applier = new OdriveRamApplier(parameters?.Invoke(Rig) ?? Rig.Parameters, Rig.Service.GetStatus, () => Rig.HidState);
             ReadAll();
             Board.ClearLines();
@@ -60,8 +75,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
         }
 
         public PowerBrakeReview Review(params (string Path, string Value)[] inputs)
-            => OdrivePowerBrakeEditor.Review(Catalog, Reader.Get, Rig.Service.GetStatus(),
-                                             inputs.ToDictionary(i => i.Path, i => i.Value, StringComparer.Ordinal));
+        {
+            var status = Rig.Service.GetStatus();
+            return OdrivePowerBrakeEditor.Review(Catalog, Reader.Get, status,
+                                                 inputs.ToDictionary(i => i.Path, i => i.Value, StringComparer.Ordinal),
+                                                 Detector?.For(status));
+        }
 
         public RamApplyResult Apply(PowerBrakeReview review)
         {
@@ -73,7 +92,11 @@ namespace OdriveWheel.SimHubPlugin.Tests
         /// <summary>The writes to the group. A software stop also sends "w" lines, to the axes.</summary>
         public string[] Writes => Board.Lines.Where(l => l.StartsWith("w config.", StringComparison.Ordinal)).ToArray();
 
-        public void Dispose() => Rig.Dispose();
+        public void Dispose()
+        {
+            Detector?.Stop();
+            Rig.Dispose();
+        }
     }
 
     public static class PowerBrakeRuleTests
@@ -478,7 +501,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
     public static class PowerBrakeApplyTests
     {
         /// <summary>Acts on the board right around a write, at the exact point the service cannot be asked to.</summary>
-        private sealed class WriteHook : IOdriveParameters
+        internal sealed class WriteHook : IOdriveParameters
         {
             private readonly Rig _rig;
             public Action<string> Before = _ => { };
@@ -526,17 +549,17 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.True(result.Writes.All(w => w.Outcome == RamWriteOutcome.NotSent), "all not sent");
         }
 
-        private static void Stop(PowerBrakeRig rig)
+        internal static void Stop(PowerBrakeRig rig)
             => Check.True(rig.Rig.Service.RequestStop().WaitForResult(3000), "the stop should finish");
 
-        private static void StopAndClear(PowerBrakeRig rig)
+        internal static void StopAndClear(PowerBrakeRig rig)
         {
             Stop(rig);
             rig.Rig.Service.ClearStopLatch();
         }
 
         // Releases the port and takes it back, until the service really is on a newer connection.
-        private static void Reconnect(PowerBrakeRig rig)
+        internal static void Reconnect(PowerBrakeRig rig)
         {
             var service = rig.Rig.Service;
             int before = service.GetStatus().ConnectGeneration;
@@ -548,7 +571,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
         }
 
         // Runs once, around the first read of this path after a write: its readback.
-        private static void AtReadback(WriteHook hook, string path, Action interfere, bool afterTheReply)
+        internal static void AtReadback(WriteHook hook, string path, Action interfere, bool afterTheReply)
         {
             bool written = false;
             hook.After = (_, __) => written = true;

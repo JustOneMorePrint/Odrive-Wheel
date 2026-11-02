@@ -90,6 +90,8 @@ namespace OdriveWheel.SimHubPlugin
                 return new RamApplyResult(writes, "the review found problems");
             if (review.Changes.Any(c => !c.Parameter.Editable))
                 return new RamApplyResult(writes, "the changes contain a parameter that cannot be edited");
+            if (review.Capabilities != null && review.Capabilities.ConnectGeneration != review.ConnectGeneration)
+                return new RamApplyResult(writes, "the firmware declaration belongs to another connection");
 
             var blocked = WhyBlocked(review, cancellation);
             if (blocked != null) return new RamApplyResult(writes, blocked);
@@ -138,7 +140,7 @@ namespace OdriveWheel.SimHubPlugin
                 if (!read.IsOk) return (null, parameter.Path + " could not be read again (" + (read.Detail ?? read.Status.ToString()) + ")");
                 if (read.Value != review.ReviewedReplies[parameter.Path])
                     return (null, parameter.Path + " changed since the review, it now reads " + read.Value);
-                if (!OdriveConfigValue.TryParseExactReply(parameter, read.Value, out double value))
+                if (!OdriveConfigValue.TryParseExactReply(parameter, read.Value, review.Capabilities, out double value))
                     return (null, parameter.Path + " is unclear (" + read.Value + ")");
                 fresh[parameter.Path] = value;
             }
@@ -233,7 +235,7 @@ namespace OdriveWheel.SimHubPlugin
                 return blocked;
             }
 
-            switch (OdriveConfigValue.CompareReadback(parameter, write.Change.CommandValue, read.Value, out var detail))
+            switch (OdriveConfigValue.CompareReadback(parameter, write.Change.CommandValue, read.Value, review.Capabilities, out var detail))
             {
                 case ReadbackVerdict.Verified:
                     write.Outcome = RamWriteOutcome.VerifiedByReadback;

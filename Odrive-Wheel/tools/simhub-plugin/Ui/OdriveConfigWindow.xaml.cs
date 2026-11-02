@@ -23,6 +23,7 @@ namespace OdriveWheel.SimHubPlugin
 
         private readonly IOdriveSerialService _serial;
         private readonly IOdriveParameters _parameters;
+        private readonly OdriveCapabilityDetector _capabilities;
         private readonly Func<int?> _hidAxisState;
         private readonly Action<string> _log;
 
@@ -37,12 +38,14 @@ namespace OdriveWheel.SimHubPlugin
         public OdriveConfigWindow(IOdriveSerialService serial, IOdriveParameters parameters,
                                   OdriveParameterCatalog catalog, Func<int?> hidAxisState, Action<string> log,
                                   IReadOnlyList<Func<IFeaturePanel>> featurePanels = null,
-                                  IPowerSupplyStore powerSupplyStore = null)
+                                  IPowerSupplyStore powerSupplyStore = null,
+                                  OdriveCapabilityDetector capabilities = null)
         {
             InitializeComponent();
 
             _serial       = serial;
             _parameters   = parameters;
+            _capabilities = capabilities;
             _hidAxisState = hidAxisState ?? (() => null);
             _log          = log ?? (_ => { });
             _catalog      = catalog;
@@ -50,7 +53,8 @@ namespace OdriveWheel.SimHubPlugin
             _ramApplier   = new OdriveRamApplier(_parameters, _serial.GetStatus, _hidAxisState, _log);
             _reader       = new OdriveParameterReader(
                 (parameter, priority, cancellation) => _parameters.ReadAsync(parameter.Path, parameter.Protocol, priority, cancellation),
-                _serial.GetStatus);
+                _serial.GetStatus,
+                capabilities != null ? capabilities.For : (Func<int, FirmwareCapabilities>)null);
             _polledParameters = catalog.Parameters.Where(p => p.Polled).ToList();
 
             StopDisclaimerText.Text = OdriveStatusText.StopDisclaimer;
@@ -102,6 +106,12 @@ namespace OdriveWheel.SimHubPlugin
             UpdateStatus();
         }
 
+        private void OnCheckCapabilities(object sender, RoutedEventArgs e)
+        {
+            _capabilities?.CheckAgain();
+            UpdateStatus();
+        }
+
         // ---- Status ----------------------------------------------------------
 
         private void UpdateStatus()
@@ -123,8 +133,23 @@ namespace OdriveWheel.SimHubPlugin
             StopStatusText.Foreground = TextBrush(stop.Severity);
             ClearStopButton.Visibility = status.StopLatched ? Visibility.Visible : Visibility.Collapsed;
 
+            UpdateCapabilityStatus(status);
             UpdateParameterRows(status);
             DropReviewIfOutdated(status);
+        }
+
+        private void UpdateCapabilityStatus(SerialStatus status)
+        {
+            if (_capabilities == null)
+            {
+                CapabilityText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var line = OdriveStatusText.Capabilities(_capabilities.Status, status.IsConnected);
+            CapabilityText.Text       = line.Text;
+            CapabilityText.Foreground = TextBrush(line.Severity);
+            CheckCapabilitiesButton.Visibility = _capabilities.CanCheckAgain ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // Only the fixed list of status values, everything else is read on request.
