@@ -3,7 +3,7 @@
 BUILD_DIR = build
 TESTS     = $(patsubst %.cpp,$(BUILD_DIR)/%,$(wildcard test_*.cpp))
 
-CXXFLAGS += -std=gnu++17 -Wall -Wextra -Werror -g -MMD -MP -I.
+CXXFLAGS += -std=gnu++17 -Wall -Wextra -Werror -g -MMD -MP -I. -I../../Odrive-Wheel/inc
 
 check: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done
