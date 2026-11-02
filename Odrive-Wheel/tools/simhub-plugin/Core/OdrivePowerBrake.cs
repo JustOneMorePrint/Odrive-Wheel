@@ -216,8 +216,8 @@ namespace OdriveWheel.SimHubPlugin
                 var shown = reading(parameter);
                 if (shown.State != ParameterReadState.Current)
                     errors.Add(parameter.Path + ": no current value, press Refresh first.");
-                else if (shown.MayBeCutOff || !OdriveConfigValue.TryParseReply(parameter, shown.RawValue, out double value))
-                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + ").");
+                else if (!OdriveConfigValue.TryParseExactReply(parameter, shown.RawValue, out double value))
+                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + "), older firmware may have rounded or cut it.");
                 else
                 {
                     replies[parameter.Path] = shown.RawValue;
@@ -229,8 +229,7 @@ namespace OdriveWheel.SimHubPlugin
             var bus = catalog.Find(BusVoltagePath);
             var busReading = reading(bus);
             if (busReading.State != ParameterReadState.Current
-                || !OdriveConfigValue.TryParseFloatReply(busReading.RawValue, out busVoltage)
-                || double.IsInfinity(busVoltage))
+                || !OdriveConfigValue.TryParseBusVoltage(busReading.RawValue, out busVoltage))
             {
                 busVoltage = double.NaN;
                 errors.Add("The measured bus voltage is not available.");

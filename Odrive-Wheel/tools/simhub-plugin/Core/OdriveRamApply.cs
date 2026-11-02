@@ -59,6 +59,9 @@ namespace OdriveWheel.SimHubPlugin
     /// The state checks run right before each write, in the plugin. They lock nothing: another source can
     /// still change the axis state between the check and the write. They exist to catch the usual case and
     /// are no hardware safeguard. A failure is reported and never repaired: no retry, no writing back.
+    ///
+    /// Every command is bound to the connection and the stop state of the review, so the serial worker holds
+    /// it back if either changed, however late. The checks here say why, and judge what comes back.
     /// </summary>
     public sealed class OdriveRamApplier
     {
@@ -91,7 +94,8 @@ namespace OdriveWheel.SimHubPlugin
             var blocked = WhyBlocked(review, cancellation);
             if (blocked != null) return new RamApplyResult(writes, blocked);
 
-            var (order, refusal) = await CheckFreshValues(review, cancellation).ConfigureAwait(false);
+            var context = new SerialOperationContext(review.ConnectGeneration, review.LastStop);
+            var (order, refusal) = await CheckFreshValues(review, context, cancellation).ConfigureAwait(false);
             if (refusal != null) return new RamApplyResult(writes, refusal);
 
             var byChange = writes.ToDictionary(w => w.Change);
@@ -99,12 +103,12 @@ namespace OdriveWheel.SimHubPlugin
             {
                 var write = byChange[change];
 
-                var why = WhyBlocked(review, cancellation) ?? await WhyNotIdle(cancellation).ConfigureAwait(false);
+                var why = WhyBlocked(review, cancellation) ?? await WhyNotIdle(context, cancellation).ConfigureAwait(false);
                 // The checks take time, so ask once more right before the line goes out.
                 why = why ?? WhyBlocked(review, cancellation);
                 if (why != null) return new RamApplyResult(writes, why);
 
-                var abort = await WriteOne(write, review, cancellation).ConfigureAwait(false);
+                var abort = await WriteOne(write, review, context, cancellation).ConfigureAwait(false);
                 _log("apply to RAM " + change.Parameter.Path + " = " + change.CommandValue + ": " + write.Outcome
                      + (write.Detail != null ? " (" + write.Detail + ")" : ""));
                 if (abort != null) return new RamApplyResult(writes, abort);
@@ -125,22 +129,22 @@ namespace OdriveWheel.SimHubPlugin
         }
 
         // The review is based on what was read earlier, this is what the board says now.
-        private async Task<(IReadOnlyList<PowerBrakeChange> Order, string Refusal)> CheckFreshValues(PowerBrakeReview review, CancellationToken cancellation)
+        private async Task<(IReadOnlyList<PowerBrakeChange> Order, string Refusal)> CheckFreshValues(PowerBrakeReview review, SerialOperationContext context, CancellationToken cancellation)
         {
             var fresh = new Dictionary<string, double>(StringComparer.Ordinal);
             foreach (var parameter in review.Group)
             {
-                var read = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Interactive, cancellation).ConfigureAwait(false);
+                var read = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Interactive, cancellation, context).ConfigureAwait(false);
                 if (!read.IsOk) return (null, parameter.Path + " could not be read again (" + (read.Detail ?? read.Status.ToString()) + ")");
                 if (read.Value != review.ReviewedReplies[parameter.Path])
                     return (null, parameter.Path + " changed since the review, it now reads " + read.Value);
-                if (!OdriveConfigValue.TryParseReply(parameter, read.Value, out double value))
+                if (!OdriveConfigValue.TryParseExactReply(parameter, read.Value, out double value))
                     return (null, parameter.Path + " is unclear (" + read.Value + ")");
                 fresh[parameter.Path] = value;
             }
 
-            var bus = await _parameters.ReadAsync(OdrivePowerBrakeEditor.BusVoltagePath, FieldProtocol.Odrive, CommandPriority.Interactive, cancellation).ConfigureAwait(false);
-            if (!bus.IsOk || !OdriveConfigValue.TryParseFloatReply(bus.Value, out double busVoltage) || double.IsInfinity(busVoltage))
+            var bus = await _parameters.ReadAsync(OdrivePowerBrakeEditor.BusVoltagePath, FieldProtocol.Odrive, CommandPriority.Interactive, cancellation, context).ConfigureAwait(false);
+            if (!bus.IsOk || !OdriveConfigValue.TryParseBusVoltage(bus.Value, out double busVoltage))
                 return (null, "the measured bus voltage could not be read");
 
             var final = new Dictionary<string, double>(fresh, StringComparer.Ordinal);
@@ -155,15 +159,15 @@ namespace OdriveWheel.SimHubPlugin
 
         // Null means both axes are IDLE, not armed and have no request waiting. Everything else, a failed read
         // or a reply of the wrong kind included, is a reason not to write.
-        private async Task<string> WhyNotIdle(CancellationToken cancellation)
+        private async Task<string> WhyNotIdle(SerialOperationContext context, CancellationToken cancellation)
         {
             foreach (var axis in Axes)
             {
-                var state = await ReadExact(axis + ".current_state", AxisStateIdle.ToString(CultureInfo.InvariantCulture), cancellation).ConfigureAwait(false);
+                var state = await ReadExact(axis + ".current_state", AxisStateIdle.ToString(CultureInfo.InvariantCulture), context, cancellation).ConfigureAwait(false);
                 if (state != null) return state;
-                var armed = await ReadExact(axis + ".motor.is_armed", "0", cancellation).ConfigureAwait(false);
+                var armed = await ReadExact(axis + ".motor.is_armed", "0", context, cancellation).ConfigureAwait(false);
                 if (armed != null) return armed;
-                var requested = await ReadExact(axis + ".requested_state", AxisStateUndefined.ToString(CultureInfo.InvariantCulture), cancellation).ConfigureAwait(false);
+                var requested = await ReadExact(axis + ".requested_state", AxisStateUndefined.ToString(CultureInfo.InvariantCulture), context, cancellation).ConfigureAwait(false);
                 if (requested != null) return requested;
             }
 
@@ -174,19 +178,20 @@ namespace OdriveWheel.SimHubPlugin
             return null;
         }
 
-        private async Task<string> ReadExact(string path, string expected, CancellationToken cancellation)
+        private async Task<string> ReadExact(string path, string expected, SerialOperationContext context, CancellationToken cancellation)
         {
-            var read = await _parameters.ReadAsync(path, FieldProtocol.Odrive, CommandPriority.Interactive, cancellation).ConfigureAwait(false);
+            var read = await _parameters.ReadAsync(path, FieldProtocol.Odrive, CommandPriority.Interactive, cancellation, context).ConfigureAwait(false);
             if (!read.IsOk) return path + " could not be read (" + (read.Detail ?? read.Status.ToString()) + ")";
             return read.Value == expected ? null : path + " is " + read.Value + ", it must be " + expected;
         }
 
-        // Returns why the rest must not go out, null to go on.
-        private async Task<string> WriteOne(RamWriteResult write, PowerBrakeReview review, CancellationToken cancellation)
+        // Returns why the rest must not go out, null to go on. Each next step builds on this value,
+        // so anything short of a confirmed one ends the run.
+        private async Task<string> WriteOne(RamWriteResult write, PowerBrakeReview review, SerialOperationContext context, CancellationToken cancellation)
         {
             var parameter = write.Change.Parameter;
             var sent = await _parameters.WriteAsync(parameter.Path, write.Change.CommandValue, parameter.Protocol,
-                                                    CommandPriority.Interactive, cancellation).ConfigureAwait(false);
+                                                    CommandPriority.Interactive, cancellation, context).ConfigureAwait(false);
             switch (sent.Status)
             {
                 case ParameterStatus.Ok:
@@ -210,12 +215,22 @@ namespace OdriveWheel.SimHubPlugin
                 return blocked;
             }
 
-            var read = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Interactive, cancellation).ConfigureAwait(false);
+            var read = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Interactive, cancellation, context).ConfigureAwait(false);
             if (!read.IsOk)
             {
                 write.Outcome = RamWriteOutcome.NotVerified;
                 write.Detail  = "readback failed: " + (read.Detail ?? read.Status.ToString());
                 return WhyBlocked(review, CancellationToken.None) ?? parameter.Path + " could not be read back";
+            }
+
+            // The reply only speaks for this write if the operation still stands now that it is here.
+            // A closing window does not change what the reply says, so that does not count here.
+            blocked = WhyBlocked(review, CancellationToken.None);
+            if (blocked != null)
+            {
+                write.Outcome = RamWriteOutcome.NotVerified;
+                write.Detail  = "readback not used: " + blocked;
+                return blocked;
             }
 
             switch (OdriveConfigValue.CompareReadback(parameter, write.Change.CommandValue, read.Value, out var detail))
@@ -226,7 +241,7 @@ namespace OdriveWheel.SimHubPlugin
                 case ReadbackVerdict.NotVerified:
                     write.Outcome = RamWriteOutcome.NotVerified;
                     write.Detail  = detail;
-                    return null;
+                    return parameter.Path + " could not be confirmed";
                 default:
                     write.Outcome = RamWriteOutcome.ReadbackDiffers;
                     write.Detail  = detail;

@@ -94,6 +94,26 @@ namespace OdriveWheel.SimHubPlugin
             return TryParseFloatReply(reply, out value);
         }
 
+        /// <summary>
+        /// A reply as a value that relations and a write order can rest on. A reply older firmware could have
+        /// produced does not qualify, however it parses: the value may be rounded or cut, and reading the same
+        /// text again settles nothing. Current firmware replies like that only now and then, see
+        /// <see cref="MayBeOlderFloatFormat"/>, and it counts just the same as the two cannot be told apart.
+        /// </summary>
+        public static bool TryParseExactReply(ParameterDefinition parameter, string reply, out double value)
+        {
+            value = 0.0;
+            return reply != null
+                && !OdriveParameterFormat.Format(parameter, reply).MayBeCutOff
+                && !MayBeOlderFloatFormat(reply)
+                && TryParseReply(parameter, reply, out value);
+        }
+
+        /// <summary>The measured bus voltage. Unlike a setting it may be rounded: it moves by far more than the
+        /// last digit between two readings anyway, and any reading can look like older firmware.</summary>
+        internal static bool TryParseBusVoltage(string reply, out double value)
+            => TryParseFloatReply(reply, out value) && !double.IsInfinity(value);
+
         internal static bool TryParseFloatReply(string reply, out double value)
         {
             value = 0.0;

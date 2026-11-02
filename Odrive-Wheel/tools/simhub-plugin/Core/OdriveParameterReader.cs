@@ -20,7 +20,7 @@ namespace OdriveWheel.SimHubPlugin
     public sealed class ParameterReading
     {
         internal ParameterReading(ParameterReadState state, string text, StatusSeverity severity,
-                                  DateTime? readAt, int connectGeneration, string rawValue = null, bool mayBeCutOff = false)
+                                  DateTime? readAt, int connectGeneration, string rawValue = null)
         {
             State             = state;
             Text              = text;
@@ -28,7 +28,6 @@ namespace OdriveWheel.SimHubPlugin
             ReadAt            = readAt;
             ConnectGeneration = connectGeneration;
             RawValue          = rawValue;
-            MayBeCutOff       = mayBeCutOff;
         }
 
         public ParameterReadState State { get; }
@@ -38,7 +37,6 @@ namespace OdriveWheel.SimHubPlugin
         public DateTime?      ReadAt   { get; }
         /// <summary>The reply as it came, null unless the state is Current.</summary>
         public string         RawValue { get; }
-        public bool           MayBeCutOff { get; }
         internal int ConnectGeneration { get; }
     }
 
@@ -190,7 +188,7 @@ namespace OdriveWheel.SimHubPlugin
                 ok = formatted.IsValid;
                 reading = ok
                     ? new ParameterReading(ParameterReadState.Current, formatted.Text, formatted.Severity, DateTime.Now, connectGeneration,
-                                           result.Value, formatted.MayBeCutOff)
+                                           result.Value)
                     : new ParameterReading(ParameterReadState.Failed, formatted.Text, formatted.Severity, null, connectGeneration);
             }
             else

@@ -126,6 +126,16 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.Equal(0, Ids(48, (R.MaxRegen, 1), (R.MaxNegative, -2)).Length, "greater in magnitude");
         }
 
+        // Why a rounded reply is no basis: %f makes -0.100000 of this limit, which would seem to leave room.
+        public static void Test_a_rounded_limit_can_hide_a_broken_relation()
+        {
+            float real = -0.09999974f;
+            float regen = 0.0999999f;
+            Check.Equal("-0.100000", ((double)real).ToString("F6", CultureInfo.InvariantCulture), "the reply of older firmware");
+            Check.Equal(0, Ids(48, (R.MaxNegative, -0.1), (R.MaxRegen, regen)).Length, "judged by the reply");
+            Expect("regen-magnitude", (R.MaxNegative, real), (R.MaxRegen, regen));
+        }
+
         public static void Test_the_ramp_counts_only_while_enabled()
         {
             Check.Equal(0, Ids(48, (R.RampStart, 60), (R.RampEnd, 50)).Length, "not enabled, so the values do not matter");
@@ -317,14 +327,77 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
         public static void Test_unclear_values_fail_the_review()
         {
-            foreach (var unclear in new[] { "123456789", "nan", "hu" })
+            // The last ones parse, and older firmware could have rounded or cut them. Current firmware can reply
+            // "56.123450" as well, they cannot be told apart.
+            foreach (var unclear in new[] { "123456789", "nan", "hu", "56.000000", "123.45678", "56.123450" })
             {
                 using (var rig = new PowerBrakeRig())
                 {
                     rig.Board.SetValue(R.OverVoltage, unclear);
                     rig.ReadAll();
-                    Check.True(!rig.Review((R.BrakeResistance, "2.5")).CanApply, unclear + " is no starting point");
+                    var review = rig.Review((R.BrakeResistance, "2.5"));
+                    Check.True(!review.CanApply, unclear + " is no starting point");
+                    Check.True(review.Errors.Single().Contains(R.OverVoltage), string.Join(" ", review.Errors));
                 }
+            }
+        }
+
+        public static void Test_a_rounded_limit_is_no_basis_for_a_relation()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                rig.Board.SetValue(R.MaxNegative, "-0.100000");
+                rig.ReadAll();
+
+                var review = rig.Review((R.MaxRegen, "0.0999999"));
+                Check.True(!review.CanApply, "judged by the reply it would fit, on the board it does not");
+                Check.True(review.Errors.Single().Contains(R.MaxNegative) && review.Errors.Single().Contains("unclear"), string.Join(" ", review.Errors));
+            }
+        }
+
+        public static void Test_a_rounded_value_is_no_basis_for_the_write_order()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                rig.Board.SetValue(R.EnableRamp, "1");
+                rig.Board.SetValue(R.RampEnd, "60.000000");
+                rig.ReadAll();
+
+                // Which of the two may go first depends on what the end really is.
+                var review = rig.Review((R.RampStart, "59.999998"), (R.RampEnd, "70"));
+                Check.True(!review.CanApply, "no order from a rounded value");
+                Check.True(review.Errors.Single().Contains(R.RampEnd) && review.Errors.Single().Contains("unclear"), string.Join(" ", review.Errors));
+            }
+        }
+
+        public static void Test_a_rounded_value_is_not_taken_as_already_set()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                rig.Board.SetValue(R.BrakeResistance, "2.500000");
+                rig.ReadAll();
+
+                var review = rig.Review((R.BrakeResistance, "2.5"));
+                Check.Equal(0, review.Unchanged.Count, "the board may hold 2.4999995");
+                Check.True(!review.CanApply, "unclear");
+            }
+        }
+
+        // What %.9g makes of them. The same comparison as above, with values that are known.
+        public static void Test_exact_replies_are_a_basis_for_relations()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                string limit = "-0.100000001";
+                rig.Board.ReplyOverride = line => line == "r " + R.MaxNegative ? limit : null;
+                rig.ReadAll();
+                Check.True(rig.Review((R.MaxRegen, "0.0999999")).CanApply, "this one fits");
+
+                limit = "-0.0999997407";
+                rig.ReadAll();
+                var review = rig.Review((R.MaxRegen, "0.0999999"));
+                Check.True(!review.CanApply, "this one does not");
+                Check.True(review.Errors.Single().Contains("greater in magnitude"), string.Join(" ", review.Errors));
             }
         }
 
@@ -410,19 +483,27 @@ namespace OdriveWheel.SimHubPlugin.Tests
             private readonly Rig _rig;
             public Action<string> Before = _ => { };
             public Action<string, ParameterResult> After = (_, __) => { };
+            public Action<string> BeforeRead = _ => { };
+            public Action<string> AfterRead = _ => { };
 
             public WriteHook(Rig rig) => _rig = rig;
 
-            public async Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+            public async Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default, SerialOperationContext context = null)
             {
                 Before(path);
-                var result = await _rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation).ConfigureAwait(false);
+                var result = await _rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation, context).ConfigureAwait(false);
                 After(path, result);
                 return result;
             }
 
-            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.ReadAsync(path, protocol, priority, cancellation);
+            public async Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default, SerialOperationContext context = null)
+            {
+                BeforeRead(path);
+                var result = await _rig.Parameters.ReadAsync(path, protocol, priority, cancellation, context).ConfigureAwait(false);
+                AfterRead(path);
+                return result;
+            }
+
             public Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
                 => throw new InvalidOperationException("the applier must not execute anything");
             public Task<ParameterResult> SaveOdriveAsync() => throw new InvalidOperationException("the applier must not save");
@@ -443,6 +524,42 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.True(result.AbortReason != null && result.AbortReason.Contains(contains), "reason: " + result.AbortReason);
             Check.Equal(0, rig.Writes.Length, "no write");
             Check.True(result.Writes.All(w => w.Outcome == RamWriteOutcome.NotSent), "all not sent");
+        }
+
+        private static void Stop(PowerBrakeRig rig)
+            => Check.True(rig.Rig.Service.RequestStop().WaitForResult(3000), "the stop should finish");
+
+        private static void StopAndClear(PowerBrakeRig rig)
+        {
+            Stop(rig);
+            rig.Rig.Service.ClearStopLatch();
+        }
+
+        // Releases the port and takes it back, until the service really is on a newer connection.
+        private static void Reconnect(PowerBrakeRig rig)
+        {
+            var service = rig.Rig.Service;
+            int before = service.GetStatus().ConnectGeneration;
+            service.ReleasePort();
+            Check.True(Wait.Until(() => service.GetStatus().State == SerialConnectionState.Released), "released");
+            service.AcquirePort();
+            Check.True(Wait.Until(() => service.GetStatus().IsConnected && service.GetStatus().ConnectGeneration > before), "a newer connection");
+            rig.Board.ClearLines();
+        }
+
+        // Runs once, around the first read of this path after a write: its readback.
+        private static void AtReadback(WriteHook hook, string path, Action interfere, bool afterTheReply)
+        {
+            bool written = false;
+            hook.After = (_, __) => written = true;
+            Action<string> once = read =>
+            {
+                if (!written || read != path) return;
+                written = false;
+                interfere();
+            };
+            if (afterTheReply) hook.AfterRead = once;
+            else hook.BeforeRead = once;
         }
 
         public static void Test_selected_values_are_written_and_read_back()
@@ -655,6 +772,102 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        // Past the last check of the applier, before the line is queued: only the serial path can still say no.
+        public static void Test_a_stop_finished_just_before_the_write_keeps_the_line_back()
+        {
+            foreach (var latched in new[] { true, false })
+            {
+                WriteHook hook = null;
+                using (var rig = new PowerBrakeRig(r => hook = new WriteHook(r)))
+                {
+                    hook.Before = path =>
+                    {
+                        if (latched) Stop(rig);
+                        else StopAndClear(rig);
+                    };
+                    var result = rig.Apply(rig.Review(Two, Three));
+
+                    CheckNothingWritten(rig, result, "software stop");
+                    Check.True(!OdriveStatusText.RamApply(result).Contains("Already transferred"), OdriveStatusText.RamApply(result));
+                }
+            }
+        }
+
+        public static void Test_a_new_connection_just_before_the_write_reaches_nothing()
+        {
+            WriteHook hook = null;
+            using (var rig = new PowerBrakeRig(r => hook = new WriteHook(r)))
+            {
+                hook.Before = path => Reconnect(rig);
+                var result = rig.Apply(rig.Review(Two, Three));
+
+                CheckNothingWritten(rig, result, "connection changed");
+                Check.Equal(0, rig.Board.WireLines.Length, "nothing reached the new connection, not even a sync line");
+                Check.Equal("2", rig.Board.Value(R.BrakeResistance), "unchanged");
+            }
+        }
+
+        // The board holds the written value, so the reply on the new connection would look like a success.
+        public static void Test_a_new_connection_before_the_readback_confirms_nothing()
+        {
+            WriteHook hook = null;
+            using (var rig = new PowerBrakeRig(r => hook = new WriteHook(r)))
+            {
+                var review = rig.Review(Two);
+                AtReadback(hook, R.BrakeResistance, () => Reconnect(rig), afterTheReply: false);
+                var result = rig.Apply(review);
+
+                Check.Equal("2.5", rig.Board.Value(R.BrakeResistance), "a read would return the expected value");
+                Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, "not for the old operation");
+                Check.True(!result.AllVerified, "no success");
+                Check.True(result.AbortReason != null && result.AbortReason.Contains("connection changed"), "reason: " + result.AbortReason);
+                Check.Equal(0, rig.Board.WireLines.Length, "the read never reached the new connection");
+                Check.True(OdriveStatusText.RamApply(result).Contains("Already transferred"), OdriveStatusText.RamApply(result));
+            }
+        }
+
+        public static void Test_a_stop_or_new_connection_around_the_readback_confirms_nothing()
+        {
+            var interferences = new (string Name, Action<PowerBrakeRig> Act, string Reason)[]
+            {
+                ("stop", Stop, "software stop"),
+                ("cleared stop", StopAndClear, "software stop"),
+                ("new connection", Reconnect, "connection changed"),
+            };
+            foreach (var afterTheReply in new[] { false, true })
+            {
+                foreach (var (name, act, reason) in interferences)
+                {
+                    var what = name + (afterTheReply ? " after the reply" : " before the read");
+
+                    // The last field, where nothing comes afterwards that could still end it.
+                    WriteHook hook = null;
+                    using (var rig = new PowerBrakeRig(r => hook = new WriteHook(r)))
+                    {
+                        var review = rig.Review(Two);
+                        AtReadback(hook, R.BrakeResistance, () => act(rig), afterTheReply);
+                        var result = rig.Apply(review);
+
+                        Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, what);
+                        Check.True(!result.AllVerified, what + ": no success");
+                        Check.True(result.AbortReason != null && result.AbortReason.Contains(reason), what + ", reason: " + result.AbortReason);
+                    }
+
+                    // And not the last one, where the next write must stay back as well.
+                    using (var rig = new PowerBrakeRig(r => hook = new WriteHook(r)))
+                    {
+                        var review = rig.Review(Two, Three);
+                        AtReadback(hook, R.BrakeResistance, () => act(rig), afterTheReply);
+                        var result = rig.Apply(review);
+
+                        Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, what);
+                        Check.Equal(RamWriteOutcome.NotSent, result.Writes[1].Outcome, what + ": the next one");
+                        Check.True(rig.Board.Value(R.MaxRegen) != "0.05", what + ": the next value stays out");
+                    }
+                }
+            }
+        }
+
         public static void Test_a_port_release_between_two_writes_ends_it()
         {
             WriteHook hook = null;
@@ -762,24 +975,108 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
-        // Every reply is in the format of older firmware, so this writes but proves nothing.
-        public static void Test_older_firmware_replies_are_not_verified()
+        // The next step must not rest on a change that is only assumed.
+        public static void Test_older_firmware_replies_are_not_verified_and_end_it()
         {
             using (var rig = new PowerBrakeRig())
             {
                 var review = rig.Review(Two, Three);
                 rig.Board.ReplyOverride = line =>
-                {
-                    if (line == "r " + R.BrakeResistance && rig.Board.CountLine("w " + R.BrakeResistance + " 2.5") > 0) return "2.500000";
-                    if (line == "r " + R.MaxRegen && rig.Board.CountLine("w " + R.MaxRegen + " 0.05") > 0) return "0.050000";
-                    return null;
-                };
+                    line == "r " + R.BrakeResistance && rig.Board.CountLine("w " + R.BrakeResistance + " 2.5") > 0 ? "2.500000" : null;
                 var result = rig.Apply(review);
 
-                Check.Equal(null, result.AbortReason, "goes on, this is not a failure");
-                Check.True(!result.AllVerified, "but no success either");
-                Check.True(result.Writes.All(w => w.Outcome == RamWriteOutcome.NotVerified), "not verified");
-                Check.True(OdriveStatusText.RamApply(result).Contains("sent, not verified (the reply 2.500000 may be rounded or cut off by older firmware)"), OdriveStatusText.RamApply(result));
+                Check.True(result.AbortReason != null && result.AbortReason.Contains(R.BrakeResistance), "reason: " + result.AbortReason);
+                Check.True(!result.AllVerified, "no success");
+                Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, "not verified");
+                Check.Equal(RamWriteOutcome.NotSent, result.Writes[1].Outcome, "not sent");
+                Check.Lines(new[] { "w " + R.BrakeResistance + " 2.5" }, rig.Writes, "no further write and no retry");
+
+                var text = OdriveStatusText.RamApply(result);
+                Check.True(text.Contains("sent, not verified (the reply 2.500000 may be rounded or cut off by older firmware)"), text);
+                Check.True(text.Contains("Already transferred, and still in place: " + R.BrakeResistance), text);
+                Check.True(text.Contains(R.MaxRegen + " = 0.05 Amps: not sent"), text);
+            }
+        }
+
+        public static void Test_an_unconfirmed_readback_ends_it()
+        {
+            foreach (var reply in new[] { "hu", "2.500000", "123456789", "invalid property" })
+            {
+                using (var rig = new PowerBrakeRig())
+                {
+                    var review = rig.Review(Two, Three);
+                    rig.Board.ReplyOverride = line =>
+                        line == "r " + R.BrakeResistance && rig.Board.CountLine("w " + R.BrakeResistance + " 2.5") > 0 ? reply : null;
+                    var result = rig.Apply(review);
+
+                    Check.True(result.AbortReason != null, reply + ": ended");
+                    Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, reply);
+                    Check.Equal(RamWriteOutcome.NotSent, result.Writes[1].Outcome, reply + ": the next one");
+                    Check.Equal(1, rig.Writes.Length, reply + ": no further write and no retry");
+                }
+            }
+        }
+
+        public static void Test_an_unconfirmed_boolean_readback_ends_it()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                var review = rig.Review((R.EnableBrake, "0"), (R.BrakeResistance, "0"));
+                rig.Board.ReplyOverride = line =>
+                    line == "r " + R.EnableBrake && rig.Board.CountLine("w " + R.EnableBrake + " 0") > 0 ? "0.000000" : null;
+                var result = rig.Apply(review);
+
+                Check.True(result.AbortReason != null, "ended");
+                Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, "not verified");
+                Check.Equal(RamWriteOutcome.NotSent, result.Writes[1].Outcome, "the resistance stays, the brake may still be on");
+                Check.Equal("2", rig.Board.Value(R.BrakeResistance), "unchanged");
+            }
+        }
+
+        public static void Test_an_unconfirmed_last_readback_is_named_as_well()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                var review = rig.Review(Two);
+                rig.Board.ReplyOverride = line =>
+                    line == "r " + R.BrakeResistance && rig.Board.CountLine("w " + R.BrakeResistance + " 2.5") > 0 ? "hu" : null;
+                var result = rig.Apply(review);
+
+                Check.True(result.AbortReason != null, "says so");
+                Check.True(!result.AllVerified, "no success");
+                Check.True(OdriveStatusText.RamApply(result).Contains("sent, not verified (unexpected reply (hu))"), OdriveStatusText.RamApply(result));
+            }
+        }
+
+        // -0.09999974f on the board, -0.100000 in the reply of older firmware. See the relation in the rule tests.
+        private const string RoundedLimit = "-0.100000";
+        private const string RegenAboveTheRealLimit = "0.0999999";
+
+        // Reading the same text again removes no doubt, so this check cannot rely on the review having caught it.
+        public static void Test_a_rounded_limit_is_no_basis_for_the_fresh_check()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                var valid = rig.Review(Two);
+                var replies = valid.ReviewedReplies.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+                replies[R.MaxNegative] = RoundedLimit;
+                rig.Board.SetValue(R.MaxNegative, RoundedLimit);
+                var regen = new PowerBrakeChange(PowerBrakeRig.Catalog.Find(R.MaxRegen), "0 Amps", RegenAboveTheRealLimit, 0.0999999f);
+                var handedOver = new PowerBrakeReview(new string[0], new[] { regen }, new string[0], new string[0],
+                                                      replies, valid.Group, valid.ConnectGeneration, valid.LastStop);
+
+                CheckNothingWritten(rig, rig.Apply(handedOver), R.MaxNegative + " is unclear");
+            }
+        }
+
+        // A measurement moves by far more than its last digit, and any reading can look like this.
+        public static void Test_a_bus_voltage_in_the_doubtful_format_is_still_a_measurement()
+        {
+            using (var rig = new PowerBrakeRig())
+            {
+                rig.Board.SetValue("vbus_voltage", "48.123451");
+                rig.ReadAll();
+                Check.True(rig.Apply(rig.Review(Two)).AllVerified, "verified");
             }
         }
 
@@ -812,6 +1109,96 @@ namespace OdriveWheel.SimHubPlugin.Tests
             {
                 CultureInfo.DefaultThreadCurrentCulture = saved;
                 Thread.CurrentThread.CurrentCulture = savedThread;
+            }
+        }
+    }
+
+    public static class SerialOperationContextTests
+    {
+        private const string Path = "config.brake_resistance";
+
+        private static SerialOperationContext Now(Rig rig)
+        {
+            var status = rig.Service.GetStatus();
+            return new SerialOperationContext(status.ConnectGeneration, status.LastStop);
+        }
+
+        private static void Reconnect(Rig rig)
+        {
+            int before = rig.Service.GetStatus().ConnectGeneration;
+            rig.Board.Present = false;
+            Check.True(Wait.Until(() => !rig.Service.GetStatus().IsConnected), "disconnected");
+            rig.Board.Present = true;
+            Check.True(Wait.Until(() => rig.Service.GetStatus().IsConnected && rig.Service.GetStatus().ConnectGeneration > before), "a newer connection");
+            rig.Board.ClearLines();
+        }
+
+        private static void CheckHeldBack(Rig rig, SerialOperationContext context, ParameterStatus status, string detail)
+        {
+            var write = rig.Parameters.WriteAsync(Path, "2.5", FieldProtocol.Odrive, context: context).Result;
+            var read = rig.Parameters.ReadAsync(Path, FieldProtocol.Odrive, context: context).Result;
+            var offb = rig.Parameters.ReadAsync("sys.swver", FieldProtocol.Openffb, context: context).Result;
+            foreach (var result in new[] { write, read, offb })
+            {
+                Check.Equal(status, result.Status, "held back");
+                Check.True(!result.LineWritten, "not written");
+                Check.True(result.Detail.Contains(detail), result.Detail);
+            }
+            Check.Equal(0, rig.Board.WireLines.Count(l => l.Contains(Path) || l.Contains("sys.swver")), "nothing of it on the wire");
+        }
+
+        public static void Test_a_bound_request_goes_out_while_its_context_holds()
+        {
+            using (var rig = new Rig())
+            {
+                var context = Now(rig);
+                Check.True(rig.Parameters.WriteAsync(Path, "2.5", FieldProtocol.Odrive, context: context).Result.IsOk, "write");
+                Check.Equal("2.5", rig.Parameters.ReadAsync(Path, FieldProtocol.Odrive, context: context).Result.Value, "read");
+                Check.Equal("1.17.0", rig.Parameters.ReadAsync("sys.swver", FieldProtocol.Openffb, context: context).Result.Value, "the other channel");
+            }
+        }
+
+        public static void Test_a_bound_request_stays_back_after_a_stop()
+        {
+            using (var rig = new Rig())
+            {
+                var context = Now(rig);
+                Check.True(rig.Service.RequestStop().WaitForResult(3000), "stop");
+                rig.Board.ClearLines();
+                CheckHeldBack(rig, context, ParameterStatus.BlockedByStop, "software stop");
+
+                rig.Service.ClearStopLatch();
+                CheckHeldBack(rig, context, ParameterStatus.BlockedByStop, "software stop");
+
+                // Bound after the stop, it stands again.
+                Check.True(rig.Parameters.WriteAsync(Path, "2.5", FieldProtocol.Odrive, context: Now(rig)).Result.IsOk, "a new context");
+            }
+        }
+
+        public static void Test_a_bound_request_stays_back_on_a_newer_connection()
+        {
+            using (var rig = new Rig())
+            {
+                var context = Now(rig);
+                Reconnect(rig);
+                CheckHeldBack(rig, context, ParameterStatus.Unavailable, "the connection changed");
+                Check.Equal(0, rig.Board.WireLines.Length, "the new connection saw nothing, not even a sync line");
+
+                Check.Equal(rig.Board.Value(Path), rig.Parameters.ReadAsync(Path, FieldProtocol.Odrive).Result.Value, "the stream is fine for everyone else");
+            }
+        }
+
+        // What profiles and the panel use: only the existing rules apply to it.
+        public static void Test_a_request_without_a_context_behaves_as_before()
+        {
+            using (var rig = new Rig())
+            {
+                Check.True(rig.Service.RequestStop().WaitForResult(3000), "stop");
+                Check.True(rig.Parameters.WriteAsync(Path, "2.5", FieldProtocol.Odrive).Result.IsOk, "not blocked by the latch, this write cannot arm");
+                rig.Service.ClearStopLatch();
+                Reconnect(rig);
+                Check.True(rig.Parameters.WriteAsync(Path, "3", FieldProtocol.Odrive).Result.IsOk, "goes out on the new connection");
+                Check.Equal("3", rig.Board.Value(Path), "on the board");
             }
         }
     }

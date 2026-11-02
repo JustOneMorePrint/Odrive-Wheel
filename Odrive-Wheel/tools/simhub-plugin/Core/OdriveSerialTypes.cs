@@ -64,12 +64,30 @@ namespace OdriveWheel.SimHubPlugin
         NotDelivered,
     }
 
+    /// <summary>
+    /// What an operation of several commands was checked against: one connection and the last software stop.
+    /// A request bound to it goes out only while both still hold, and the worker decides that right before the
+    /// line. A check before queueing cannot: the stop or the new connection can come after it.
+    /// </summary>
+    public sealed class SerialOperationContext
+    {
+        public SerialOperationContext(int connectGeneration, StopTicket lastStop)
+        {
+            ConnectGeneration = connectGeneration;
+            LastStop          = lastStop;
+        }
+
+        public int        ConnectGeneration { get; }
+        public StopTicket LastStop          { get; }
+    }
+
     public sealed class SerialRequest
     {
         public SerialRequest(string line, ReplyMode mode, int timeoutMs,
                              CommandPriority priority = CommandPriority.Interactive,
                              string expectedEcho = null,
-                             CancellationToken cancellation = default)
+                             CancellationToken cancellation = default,
+                             SerialOperationContext context = null)
         {
             Line         = line ?? throw new ArgumentNullException(nameof(line));
             Mode         = mode;
@@ -77,6 +95,7 @@ namespace OdriveWheel.SimHubPlugin
             Priority     = priority;
             ExpectedEcho = expectedEcho;
             Cancellation = cancellation;
+            Context      = context;
         }
 
         public string            Line         { get; }
@@ -85,6 +104,8 @@ namespace OdriveWheel.SimHubPlugin
         public CommandPriority   Priority     { get; }
         public string            ExpectedEcho { get; }
         public CancellationToken Cancellation { get; }
+        /// <summary>Null for a request that stands on its own.</summary>
+        public SerialOperationContext Context { get; }
     }
 
     public sealed class SerialResult
