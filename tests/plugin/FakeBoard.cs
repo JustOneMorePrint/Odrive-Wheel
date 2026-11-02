@@ -48,6 +48,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             _values["sys.build"] = "abc branch=test";
             foreach (var p in Catalog.Value.Parameters)
                 if (!_values.ContainsKey(p.Path)) _values[p.Path] = "0";
+            _values["axis1.motor.is_armed"] = "0";
         }
 
         private static readonly Lazy<OdriveParameterCatalog> Catalog
@@ -326,6 +327,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             {
                 var axis = path.Substring(0, path.IndexOf('.'));
                 _values[axis + ".current_state"] = value;
+                _values[path] = "0";    // the axis thread takes the request and clears it (axis.cpp)
             }
         }
 

@@ -20,13 +20,15 @@ namespace OdriveWheel.SimHubPlugin
     public sealed class ParameterReading
     {
         internal ParameterReading(ParameterReadState state, string text, StatusSeverity severity,
-                                  DateTime? readAt, int connectGeneration)
+                                  DateTime? readAt, int connectGeneration, string rawValue = null, bool mayBeCutOff = false)
         {
             State             = state;
             Text              = text;
             Severity          = severity;
             ReadAt            = readAt;
             ConnectGeneration = connectGeneration;
+            RawValue          = rawValue;
+            MayBeCutOff       = mayBeCutOff;
         }
 
         public ParameterReadState State { get; }
@@ -34,6 +36,9 @@ namespace OdriveWheel.SimHubPlugin
         public StatusSeverity Severity { get; }
         /// <summary>Local time of the read, null unless the state is Current.</summary>
         public DateTime?      ReadAt   { get; }
+        /// <summary>The reply as it came, null unless the state is Current.</summary>
+        public string         RawValue { get; }
+        public bool           MayBeCutOff { get; }
         internal int ConnectGeneration { get; }
     }
 
@@ -103,6 +108,13 @@ namespace OdriveWheel.SimHubPlugin
                 ? new ParameterReading(ParameterReadState.Outdated, "outdated (was " + reading.Text + ")",
                                        StatusSeverity.Warning, null, reading.ConnectGeneration)
                 : NeverRead;
+        }
+
+        /// <summary>Forgets a value that was written or may have been: what was read before says nothing now.</summary>
+        public void Invalidate(ParameterDefinition parameter)
+        {
+            _readings.TryRemove(parameter.Path, out _);
+            Interlocked.Increment(ref _version);
         }
 
         /// <summary>Reads the parameters one after the other. Ends early on a software stop, on
@@ -177,7 +189,8 @@ namespace OdriveWheel.SimHubPlugin
                 var formatted = OdriveParameterFormat.Format(parameter, result.Value);
                 ok = formatted.IsValid;
                 reading = ok
-                    ? new ParameterReading(ParameterReadState.Current, formatted.Text, formatted.Severity, DateTime.Now, connectGeneration)
+                    ? new ParameterReading(ParameterReadState.Current, formatted.Text, formatted.Severity, DateTime.Now, connectGeneration,
+                                           result.Value, formatted.MayBeCutOff)
                     : new ParameterReading(ParameterReadState.Failed, formatted.Text, formatted.Severity, null, connectGeneration);
             }
             else

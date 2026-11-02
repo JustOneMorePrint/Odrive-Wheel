@@ -58,6 +58,8 @@ namespace OdriveWheel.SimHubPlugin
         public bool Polled     { get; internal set; }
         /// <summary>Result of a calibration: the firmware accepts a write, but the web client refuses it.</summary>
         public bool Calibrated { get; internal set; }
+        /// <summary>The window may write this, see OdrivePowerBrakeEditor. Everything else stays read-only.</summary>
+        public bool Editable   { get; internal set; }
     }
 
     /// <summary>
@@ -152,9 +154,13 @@ namespace OdriveWheel.SimHubPlugin
                 ErrorKind   = ParseErrorKind(entry.Value<string>("flags"), path),
                 Polled      = entry.Value<bool?>("poll") ?? false,
                 Calibrated  = entry.Value<bool?>("calibrated") ?? false,
+                Editable    = entry.Value<bool?>("editable") ?? false,
             };
             if (definition.Min > definition.Max)
                 throw new InvalidDataException("min is above max: " + path);
+            if (definition.Editable && (definition.Access != ParameterAccess.Write || definition.Protocol != FieldProtocol.Odrive
+                                        || (definition.Type != ParameterType.Float && definition.Type != ParameterType.Boolean)))
+                throw new InvalidDataException("cannot be editable: " + path);
 
             var enumName = entry.Value<string>("enum");
             if ((definition.Type == ParameterType.Enum) != (enumName != null))

@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Linq;
+using System.Text;
 
 namespace OdriveWheel.SimHubPlugin
 {
@@ -159,6 +161,61 @@ namespace OdriveWheel.SimHubPlugin
 
             var at = "Read at " + now.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + ": " + result.Succeeded + " ok";
             return result.Failed == 0 ? at + "." : at + ", " + result.Failed + " failed.";
+        }
+
+        /// <summary>The summary to read before applying.</summary>
+        public static string RamReview(PowerBrakeReview review)
+        {
+            var text = new StringBuilder();
+            if (review.Errors.Count > 0)
+            {
+                text.AppendLine("Cannot be applied:");
+                foreach (var error in review.Errors) text.AppendLine("  " + error);
+                return text.ToString().TrimEnd();
+            }
+
+            text.AppendLine("Will be written to RAM, in this order:");
+            foreach (var change in review.Changes)
+                text.AppendLine("  " + change.Parameter.Path + ": " + change.OldText + " → " + change.NewText);
+            foreach (var path in review.Unchanged)
+                text.AppendLine("  " + path + ": already has this value, not written");
+            foreach (var note in review.Notes)
+                text.AppendLine("Note: " + note);
+            text.Append("Nothing is saved to the board. Both axes are checked for IDLE right before each write, which does not lock out other command sources.");
+            return text.ToString();
+        }
+
+        /// <summary>The outcome of one write, in the words the window uses.</summary>
+        public static string RamWrite(RamWriteResult write)
+        {
+            string outcome;
+            switch (write.Outcome)
+            {
+                case RamWriteOutcome.VerifiedByReadback: outcome = "verified by readback"; break;
+                case RamWriteOutcome.NotVerified:        outcome = "sent, not verified"; break;
+                case RamWriteOutcome.Sent:               outcome = "sent"; break;
+                case RamWriteOutcome.ReadbackDiffers:    outcome = "sent, readback differs"; break;
+                case RamWriteOutcome.RefusedByFirmware:  outcome = "refused by the firmware"; break;
+                default:                                 outcome = "not sent"; break;
+            }
+            return string.IsNullOrEmpty(write.Detail) ? outcome : outcome + " (" + write.Detail + ")";
+        }
+
+        /// <summary>What happened, with everything that already reached the board named.</summary>
+        public static string RamApply(RamApplyResult result)
+        {
+            var text = new StringBuilder();
+            var wentOut = result.Writes.Where(w => w.WentOut).ToList();
+
+            if (result.AbortReason != null)
+                text.AppendLine((wentOut.Count == 0 ? "Nothing was written: " : "Aborted: ") + result.AbortReason + ". No retry and no writing back.");
+            foreach (var write in result.Writes)
+                text.AppendLine("  " + write.Change.Parameter.Path + " = " + write.Change.NewText + ": " + RamWrite(write));
+            if (result.AbortReason != null && wentOut.Count > 0)
+                text.AppendLine("Already transferred, and still in place: " + string.Join(", ", wentOut.Select(w => w.Change.Parameter.Path)) + ".");
+            if (wentOut.Count > 0)
+                text.Append("In RAM only, nothing was saved to the board: a reboot restores the saved values.");
+            return text.ToString().TrimEnd();
         }
 
         private static string Ms(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture) + " ms";

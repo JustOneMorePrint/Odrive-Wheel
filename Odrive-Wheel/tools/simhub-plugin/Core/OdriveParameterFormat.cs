@@ -4,17 +4,20 @@ namespace OdriveWheel.SimHubPlugin
 {
     public sealed class FormattedValue
     {
-        public FormattedValue(string text, StatusSeverity severity = StatusSeverity.Neutral, bool isValid = true)
+        public FormattedValue(string text, StatusSeverity severity = StatusSeverity.Neutral, bool isValid = true, bool mayBeCutOff = false)
         {
-            Text     = text;
-            Severity = severity;
-            IsValid  = isValid;
+            Text        = text;
+            Severity    = severity;
+            IsValid     = isValid;
+            MayBeCutOff = mayBeCutOff;
         }
 
         public string         Text     { get; }
         public StatusSeverity Severity { get; }
         /// <summary>False if the reply is not a value of the expected type.</summary>
         public bool           IsValid  { get; }
+        /// <summary>The number itself may be wrong, not just rounded.</summary>
+        public bool           MayBeCutOff { get; }
     }
 
     /// <summary>Turns a reply into the text the window shows. Never guesses: a reply that does not
@@ -46,7 +49,7 @@ namespace OdriveWheel.SimHubPlugin
 
             // A cut-off number decodes to bits that are not set.
             if (FillsTheReply(definition, value))
-                return new FormattedValue(value + " (" + MayBeCutOff + ", not decoded)", StatusSeverity.Danger);
+                return new FormattedValue(value + " (" + MayBeCutOff + ", not decoded)", StatusSeverity.Danger, mayBeCutOff: true);
             if (mask > uint.MaxValue)
                 return new FormattedValue(value + " (above 32 bits, not decoded)", StatusSeverity.Danger);
             return new FormattedValue(OdriveErrorDecoder.Decode(definition.ErrorKind, (uint)mask), StatusSeverity.Danger);
@@ -97,7 +100,7 @@ namespace OdriveWheel.SimHubPlugin
         private static FormattedValue WithCutOffNote(ParameterDefinition definition, string value, bool mayBeCutOff)
         {
             return mayBeCutOff
-                ? new FormattedValue(WithUnit(definition, value) + " (" + MayBeCutOff + ")", StatusSeverity.Warning)
+                ? new FormattedValue(WithUnit(definition, value) + " (" + MayBeCutOff + ")", StatusSeverity.Warning, mayBeCutOff: true)
                 : new FormattedValue(WithUnit(definition, value));
         }
 
