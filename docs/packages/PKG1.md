@@ -100,7 +100,8 @@ value `v=1 ascii_full=1 float32_rt=1`:
 | `float32_rt` | `1`: a float in an `r <path>` reply parses back to the same float32 (`%.9g`, the fix of PR #6). |
 
 - Exactly these three fields, each once, separated by one space. Anything else is no declaration: a missing
-  or repeated field, a value other than `0` or `1`, an extra field, another `v`.
+  or repeated field, a field without `=`, a value other than `0` or `1`, an extra field, another `v`. Each field is
+  judged on its own, so a valid one cannot make up for a bad one before or after it.
 - Get only. `sys.capabilities=…` and `sys.capabilities!` answer `ERR` and change nothing. It has no state and
   touches no flash. It is a read-only command for any client, also with the software stop set.
 - Firmware without the command answers `NOT_FOUND`.
@@ -139,8 +140,15 @@ against the real formatting, so a change there fails until the declaration follo
 - The text of a value is worked out when it is shown, with what was declared on the connection it was read on. So a value
   read before the check ended is redrawn without another read. The same firmware answered both. A value of an earlier
   connection stays `outdated` and is never upgraded.
-- A review keeps the declaration it was made with, and the fresh check and the readback of that apply use the same
-  object. If the declaration changes while a review is waiting, the window drops the review and asks for a new one.
+- A review rests on one state of the check, a `FirmwareCapabilityStatus`, and the fresh check and the readback of that
+  apply use its declaration. Every new state ends the review, also a new check without an answer yet, and one that ends up
+  saying the same.
+- While the check runs there is no review. After a check without a declaration the careful way is open again, with a
+  new review.
+- The state is looked at when the apply starts, before and after every command of it, and in the serial worker right
+  before each line, through the `Superseded` token of the state. So no further line goes out on an old basis, and no
+  reply confirms a write. What already went out stays and is named, there is no retry and no rollback. The window also
+  drops the review, at once on **Check firmware again** and at the latest on **Apply to RAM**.
 - The firmware is not trusted with anything else: all guards of an apply stay, see below.
 
 **What this does not prove:** the tests run on the PC. `printf` is the PC's there, so `%.9g` in newlib-nano and the
@@ -212,7 +220,8 @@ Each write is a state of its own, so the values go out in an order in which no s
 - The state checks run in the plugin, right before each write. They are no atomic safeguard: another
   command source can change the state in between.
 - A stop requested in the instant between the worker's last check and the line cannot call that line back.
-  The stop lines follow right behind it, and nothing else of the apply goes out.
+  The stop lines follow right behind it, and nothing else of the apply goes out. The same goes for a new state of
+  the firmware check in that instant.
 - Without a declaration the review refuses while one of the ten values has a reply in doubt, which on older
   firmware is nearly every float.
 - Only finite values can be entered, so `dc_max_positive_current` cannot go back to `inf` here. A reboot

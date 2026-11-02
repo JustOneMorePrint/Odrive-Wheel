@@ -369,8 +369,9 @@ and the line **Firmware replies** at the top of the window shows the result.
 | `checking…` | The answer is not here yet. Values already shown are redrawn when it arrives. |
 
 **Check firmware again** asks once more, it appears only after a check that found
-nothing. The plugin does not conclude anything from the version or the build id,
-and a new connection is always asked again, as another firmware may be on the board.
+nothing. It ends a prepared review and a running **Apply to RAM**, as they rest on
+the state before. The plugin does not conclude anything from the version or the build
+id, and a new connection is always asked again, as another firmware may be on the board.
 
 Newer firmware also writes floats with up to nine significant digits, so `25`,
 `0.100000001` or `1.17549435e-38` instead of `25.000000`, `0.100000` or `0.000000`.
@@ -423,16 +424,17 @@ source can still change the state between the check and the write.
 A write has no answer of its own, so only the readback can confirm it. Each next
 write rests on the one before, so **anything but `verified by readback` ends the run**,
 and the result names what already went out. It is not repeated and not undone. A
-software stop, **Release port** or a new connection ends it as well, also if it comes
-while a command is on its way: nothing more goes out, and a reply that comes in after
-it confirms nothing.
+software stop, **Release port**, a new connection or a change of **Firmware replies**
+ends it as well, also if it comes while a command is on its way: nothing more goes
+out, and a reply that comes in after it confirms nothing.
 
 **Exact values:** the relations between the values need what the board really holds.
 With **Firmware replies** at `declared complete and exact`, that is what a reply says,
 also for a value like `32.012001` or `0.015625`, and the readback compares the float32
 values. There is no need to limit the number of decimals.
 
-Without that declaration, a reply like `56.000000` or `0.015625` could be rounded or cut
+While the line says `checking…` there is no review, its answer decides what counts as
+exact. Without a declaration, a reply like `56.000000` or `0.015625` could be rounded or cut
 by older firmware. Such a value cannot be judged, so the review refuses it and names
 the field, and a readback in that form does not count as verified. On older firmware
 that is nearly every float, so editing takes a current firmware.
