@@ -389,9 +389,10 @@ features.
 Below the power supply data you can change the ten `config.*` values of the group
 Power / Brake. `sys.vbusdiv` and the communication values stay read-only.
 
-1. Press **Refresh these values**. Without a current value for all ten, there is no
-   review.
+1. Press **Refresh these values**. Without a current and exact value for all ten, there
+   is no review.
 2. Type the new values and tick their fields. Typing sends nothing. A boolean is 0 or 1.
+   Use at most two decimals if you can, see below.
 3. Press **Review selected changes**. The summary shows old and new values in the order
    they will be written, and whatever speaks against them. The new value is the float32
    the firmware will store, which can differ slightly from what you typed. A review
@@ -411,11 +412,20 @@ source can still change the state between the check and the write.
 | `refused by the firmware (…)` | The firmware answered with an error. |
 | `not sent` | The line never went out. |
 
-A write has no answer of its own. Older firmware rounds and cuts what it reads
-back, so on such a firmware you will see `sent, not verified` even if all went well.
+A write has no answer of its own, so only the readback can confirm it. Each next
+write rests on the one before, so **anything but `verified by readback` ends the run**,
+and the result names what already went out. It is not repeated and not undone. A
+software stop, **Release port** or a new connection ends it as well, also if it comes
+while a command is on its way: nothing more goes out, and a reply that comes in after
+it confirms nothing.
 
-Anything but success ends the run, and the result names what already went out. It is
-not repeated and not undone.
+**Unclear values:** older firmware rounds and cuts what it reads, and a value like
+`56.000000` or `123.45678` could come from that. The relations cannot be judged from
+such a value, so the review refuses it and names the field. On older firmware that
+is nearly every float. On current firmware it is rare, but it happens: `32.012` reads
+`32.012001`, which looks the same. Values with at most two decimals do not read like
+this. While one of the ten fields holds such a value, the editor stays refused, until
+a reboot restores the saved value or something else changes it.
 
 **Applied values are in RAM only.** A reboot restores the saved values. The editor
 never saves to the board. If you want to keep them, that is **Save to flash** in the

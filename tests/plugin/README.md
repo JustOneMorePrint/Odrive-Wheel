@@ -43,7 +43,7 @@ Ein hängender Test scheitert nach 30 s an seinem Zeitlimit.
 | `ParameterReaderTests.cs` | Lese-Logik der Tabs: Anzeige je Typ, gekürzte Zahlen, Fehlerdecoder, nicht unterstützte Parameter, Timeouts, veraltete Werte, Stopp und Portfreigabe während des Lesens |
 | `EditorWindowTests.cs` | Lesende Tabs im echten Fenster: gezieltes Aktualisieren von Tab und Gruppe, begrenztes Polling, der Nachweis, dass jeder Button nur Lesebefehle sendet, Stop- und Port-Button während des Lesens |
 | `PowerSupplyTests.cs` | Power supply data: validation, headroom calculation, optional short-time values, settings round trip, not part of profiles, no board command from the window |
-| `PowerBrakeTests.cs` | Power / Brake editor: relations from the firmware, float32 values and readback, ambiguous replies of older firmware, the review, every reason not to write, aborts between two writes, and in the real window that only selected values go out and the stop button works during an apply |
+| `PowerBrakeTests.cs` | Power / Brake editor: relations from the firmware, float32 values and readback, ambiguous replies of older firmware as readback and as a basis, the review, every reason not to write, aborts between two writes, a stop or a new connection right before a line and around a readback, commands bound to a connection and stop state, and in the real window that only selected values go out and the stop button works during an apply |
 | `ProfileAndActionTests.cs` | Profil anwenden in exakt der bisherigen Zeilenfolge, Spielwechsel, Save to flash, Profildatei, Inc/Dec-Aktionen |
 | `WindowTests.cs` | Echtes WPF-Fenster auf eigenem Thread, Stop-Button per UI-Automation, modaler Dialog auf einem anderen Thread, Schließen während des Starts, Bereich „Extensions“ |
 

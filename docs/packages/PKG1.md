@@ -97,15 +97,31 @@ communication parameters and all other tabs.
 | Step | What happens |
 |---|---|
 | Typing, selecting | Nothing is sent. |
-| Review | Sends nothing. All ten values must have been read on this connection and be clear. Shows old and new values. No modal dialog, it would block the stop button. |
-| Apply to RAM | Reads all ten values and the bus voltage again and stops if one differs from the review. Then, before each write: stop, connection and both axes (`current_state` is IDLE, `motor.is_armed` is 0, `requested_state` is 0). |
+| Review | Sends nothing. All ten values must have been read on this connection and be exact. Shows old and new values. No modal dialog, it would block the stop button. |
+| Apply to RAM | Reads all ten values and the bus voltage again, and stops if one differs from the review or is not exact. Then, before each write: stop, connection and both axes (`current_state` is IDLE, `motor.is_armed` is 0, `requested_state` is 0). |
 | Write | One `w` line. The firmware has no positive answer, so this only means sent. |
-| Read back | The reply is compared as a float32 or as a boolean. |
+| Read back | The reply is compared as a float32 or as a boolean, if the connection and the stop state still hold when it is here. |
 
 The outcomes of a write are `verified by readback`, `sent, not verified`, `sent, readback differs`,
-`refused by the firmware` and `not sent`. Older firmware rounds and cuts its replies, so a reply it could
-have produced never counts as verified, also when newer firmware sent it. A failure ends the run and
-names what already went out. There is no retry and no writing back.
+`refused by the firmware` and `not sent`. Anything but `verified by readback` ends the run and names what
+already went out, because each next step rests on the value before it. There is no retry and no writing
+back.
+
+**Bound to the review:** every command of an apply carries the connection generation and the last stop of
+the review (`SerialOperationContext`). The serial worker checks them right before the line, so a stop or a
+new connection holds it back however late it comes. Requests without a context, such as profiles and the
+panel, keep their existing rules.
+
+**Replies older firmware could have produced** (`OdriveConfigValue.MayBeOlderFloatFormat`) are rounded or
+cut, and current firmware replies like that now and then, the two cannot be told apart. Such a reply:
+
+- never counts as verified,
+- is no basis for relations or the write order. The review and the fresh check refuse it alike, and reading
+  the same text again does not help. The example behind this: `dc_max_negative_current` holds
+  `-0.09999974`, older firmware replies `-0.100000`, and a `max_regen_current` of `0.0999999` would seem to
+  fit,
+- is accepted only for the measured bus voltage, which moves by far more than its last digit between two
+  readings, and about 9 of 100 readings look like this.
 
 **Relations checked**, all taken from what the firmware does (`ODrive::do_fast_checks` in `main.cpp`,
 `update_brake_current` in `low_level.cpp`, the remarks in `odrive-interface.yaml`). No value is too high or
@@ -128,6 +144,12 @@ Each write is a state of its own, so the values go out in an order in which no s
 
 - The state checks run in the plugin, right before each write. They are no atomic safeguard: another
   command source can change the state in between.
+- A stop requested in the instant between the worker's last check and the line cannot call that line back.
+  The stop lines follow right behind it, and nothing else of the apply goes out.
+- On older firmware the review refuses, since nearly all its float replies look rounded. On current firmware
+  it refuses while one of the ten values has such a reply: about 9 of 100 arbitrary float32 values and about
+  7 of 100 values with three decimals (`32.012` reads `32.012001`), none with at most two decimals. A value
+  like that blocks the editor until a reboot restores the saved one, or something else changes it.
 - Only finite values can be entered, so `dc_max_positive_current` cannot go back to `inf` here. A reboot
   restores the saved value, as nothing is saved.
 - `enable_brake_resistor` takes effect only after a reboot, says the firmware interface. The review points
