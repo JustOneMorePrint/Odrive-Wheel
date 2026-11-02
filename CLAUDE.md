@@ -13,7 +13,8 @@ das Testvorgehen in `docs/TESTING.md`.
 - Wir erweitern Firmware und SimHub-Plugin in **sieben voneinander unabhängigen
   Paketen** (siehe `docs/ROADMAP.md`).
 - Der Web-Client `Odrive-Wheel/tools/odrive-wheel.html` wird durch das SimHub-Plugin
-  ersetzt. Er bleibt im Repo, wird aber **nicht mehr geändert**.
+  ersetzt. Er bleibt im Repo, wird aber **nicht mehr geändert**. GitHub Pages gehört nicht
+  zum Projektbetrieb.
 - Kompatibilität zwischen alter und neuer Firmware bzw. Software ist kein Ziel.
 - Testhardware des Nutzers: **MKS XDrive Mini** (VBUS-Teiler 19, Default der Firmware).
 - Die Alt/Neu-Schalter neuer Features gelten **global**. Sie sind nicht Teil der

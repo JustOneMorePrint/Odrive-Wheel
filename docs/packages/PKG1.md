@@ -4,8 +4,13 @@ Ziel: Das SimHub-Plugin übernimmt alle Funktionen des Web-Clients außer den
 Analyse-Werkzeugen (Performance-Test, Sweep, Live-Plots, FFT, Overlay, Force-Test),
 die in Paket 2 folgen. Keine Firmware-Änderungen in diesem Paket.
 
-Der Web-Client bleibt während Paket 1 und 2 parallel nutzbar, damit du jederzeit
-vergleichen kannst. Danach wird er nicht mehr verwendet.
+Die Konfiguration erfolgt ausschließlich über das SimHub-Plugin. Der Web-Client bleibt nur
+als lesbare Referenz im Repository und wird nicht weiterentwickelt, GitHub Pages gehört
+nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die lokale Datei
+`Odrive-Wheel/tools/odrive-wheel.html` gemeint.
+
+**Stand:** 1a ist in `main`, die Hardwaretests dazu sind offen. 1b–1e sind geplant und nicht
+umgesetzt, die Funktionen fehlen im Plugin also noch.
 
 ## Architektur
 
