@@ -25,7 +25,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 0 | Prozess-Setup | ☑ |
-| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ 1a in `main`, hardware tests open; 1b: read-only tabs, power supply data and Power / Brake editing to RAM implemented, not checked on the board; rest of 1b and 1c–1e planned |
+| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ 1a in `main`, hardware tests open; 1b: read-only tabs, power supply data, Power / Brake editing to RAM and the firmware capability check implemented, not checked on the board; rest of 1b and 1c–1e planned |
 | 2 | Plugin-Analyse | ☐ |
 | 3 | Achs-Pipeline, Schutz und 8 kHz | ☐ |
 | 4 | Signalkette vom Spiel | ☐ |
@@ -251,8 +251,9 @@ Die Formatierer melden Erfolg nur noch, wenn der ganze Wert passt, sonst steht i
 `TO_STRING_BUFFER_SIZE` ist auf den längsten Wert ausgelegt. Die 64-Bit-Umwandlung bleibt von Hand geschrieben, weil
 newlib-nano weder `%llu` noch `%lld` kennt.
 
-Das Plugin bleibt absichtlich vorsichtig: Es erkennt die Firmware noch nicht und markiert jede Zahl ab 9 Zeichen als
-möglicherweise gekürzt. Firmware-Erkennung und Export/Import folgen später.
+The firmware declares this through `sys.capabilities?`, and the plugin only stops doubting a reply with that declaration
+on the same connection. Without it, a number of 9 or more characters stays marked as possibly cut. The contract is in
+`docs/packages/PKG1.md`, „Firmware capabilities“. Export/import follows later.
 
 **Nachweisstand:** `tests/host/test_ascii_read.cpp` führt die echten Formatierer, den echten Antwortweg und den echten
 Sende-Puffer auf dem PC aus. Die Arbeit von `printf` macht dort die C-Bibliothek des PCs. Am Board ungeprüft ist deshalb,
