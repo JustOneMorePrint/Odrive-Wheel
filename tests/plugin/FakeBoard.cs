@@ -294,7 +294,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             switch (parts[0])
             {
                 case "r":
-                    Reply(_values.TryGetValue(parts[1], out var value) ? CutLikeTheFirmware(value) : "invalid property");
+                    Reply(_values.TryGetValue(parts[1], out var value) ? CutLikeOlderFirmware(value) : "invalid property");
                     break;
                 case "w":
                     ProcessOdriveWrite(parts[1], parts[2]);
@@ -308,8 +308,9 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
-        // cmd_read_property has a 10-byte buffer, to_string cuts without any notice.
-        private static string CutLikeTheFirmware(string value)
+        // Older firmware: cmd_read_property has a 10-byte buffer, to_string cuts without any notice.
+        // The plugin has to cope with that as long as it cannot tell the firmware versions apart.
+        private static string CutLikeOlderFirmware(string value)
             => value.Length > OdriveProtocol.OdriveReadLimit ? value.Substring(0, OdriveProtocol.OdriveReadLimit) : value;
 
         private void ProcessOdriveWrite(string path, string value)
