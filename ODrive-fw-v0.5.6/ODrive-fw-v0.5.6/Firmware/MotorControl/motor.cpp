@@ -208,14 +208,24 @@ extern "C" volatile uint32_t g_arm_success_cnt;
 extern "C" volatile uint32_t g_disarm_call_cnt;
 extern "C" volatile uint32_t g_brake_resistor_armed_snapshot;
 extern "C" volatile uint32_t g_enable_brake_snapshot;
+extern "C" bool odrive_bridge_flash_arm_allowed(void);  // [pkgS] src/odrive_bridge.cpp
 
 bool Motor::arm(PhaseControlLaw<3>* control_law) {
     g_arm_call_cnt++;
     odrive_drv_trace(0xF0);
+    // [pkgS] No arming during a flash operation, the callers see is_armed_ stay false and end in
+    // idle. Asked here so the brake stays closed, and again below, where it can't race with
+    // odrive_bridge_flash_begin().
+    if (!odrive_bridge_flash_arm_allowed()) {
+        return false;
+    }
     axis_->mechanical_brake_.release();
     odrive_drv_trace(0xF1);
 
     CRITICAL_SECTION() {
+        if (!odrive_bridge_flash_arm_allowed()) {  // [pkgS]
+            return false;
+        }
         control_law_ = control_law;
         axis_->controller_.reset();
         axis_->acim_estimator_.rotor_flux_ = 0.0f;

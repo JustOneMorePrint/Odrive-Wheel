@@ -30,6 +30,9 @@ extern "C" void odrive_bridge_start_enc_thread(void);
 // ffb_task_init corrigir o scale.
 extern "C" void ffb_init_storage_early(void);
 
+// [pkgS] Flash guard (defined in src/odrive_bridge.cpp)
+extern "C" bool odrive_bridge_flash_begin(void);
+
 #if defined(STM32F405xx)
 // Place FreeRTOS heap in core coupled memory for better performance
 __attribute__((section(".ccmram")))
@@ -198,6 +201,12 @@ bool ODrive::save_configuration(void) {
 }
 
 void ODrive::erase_configuration(void) {
+    // [pkgS] Refused with a motor active, silently like save_configuration. No flash_end: the
+    // reset below follows in any case.
+    if (!odrive_bridge_flash_begin()) {
+        return;
+    }
+
     NVM_erase();
 
     // FIXME: this reboot is a workaround because we don't want the next save_configuration
