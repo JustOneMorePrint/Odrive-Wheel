@@ -133,7 +133,8 @@ namespace OdriveWheel.SimHubPlugin
             SerialService.Start();
             ConfigWindow = new OdriveConfigWindowHost(
                 () => new OdriveConfigWindow(SerialService, Parameters, OdriveParameterCatalog.LoadEmbedded(),
-                                             hidAxisState, serialLog),
+                                             hidAxisState, serialLog,
+                                             powerSupplyStore: new PluginSettingsPowerSupplyStore(() => Settings, SaveSettings)),
                 serialLog);
 
             ProfileService = new OdriveProfileService(

@@ -36,7 +36,8 @@ namespace OdriveWheel.SimHubPlugin
 
         public OdriveConfigWindow(IOdriveSerialService serial, IOdriveParameters parameters,
                                   OdriveParameterCatalog catalog, Func<int?> hidAxisState, Action<string> log,
-                                  IReadOnlyList<Func<IFeaturePanel>> featurePanels = null)
+                                  IReadOnlyList<Func<IFeaturePanel>> featurePanels = null,
+                                  IPowerSupplyStore powerSupplyStore = null)
         {
             InitializeComponent();
 
@@ -44,6 +45,9 @@ namespace OdriveWheel.SimHubPlugin
             _parameters   = parameters;
             _hidAxisState = hidAxisState ?? (() => null);
             _log          = log ?? (_ => { });
+            _catalog      = catalog;
+            _powerSupplyStore = powerSupplyStore ?? new InMemoryPowerSupplyStore();
+            _ramApplier   = new OdriveRamApplier(_parameters, _serial.GetStatus, _hidAxisState, _log);
             _reader       = new OdriveParameterReader(
                 (parameter, priority, cancellation) => _parameters.ReadAsync(parameter.Path, parameter.Protocol, priority, cancellation),
                 _serial.GetStatus);
@@ -120,6 +124,7 @@ namespace OdriveWheel.SimHubPlugin
             ClearStopButton.Visibility = status.StopLatched ? Visibility.Visible : Visibility.Collapsed;
 
             UpdateParameterRows(status);
+            DropReviewIfOutdated(status);
         }
 
         // Only the fixed list of status values, everything else is read on request.
