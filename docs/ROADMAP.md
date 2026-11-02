@@ -11,7 +11,9 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
   Neukalibrierung.
 - Alle Pakete sind einzeln umsetzbar; gemeinsame Dateien werden dafür mehrfach angefasst.
 - Kompatibilität alte/neue Firmware bzw. Software ist kein Ziel.
-- Der Web-Client wird durch das SimHub-Plugin ersetzt und nicht mehr gepflegt.
+- Die Konfiguration erfolgt ausschließlich über das SimHub-Plugin, weitere Funktionen wie
+  Firmware-Updates folgen dort gemäß Paket 1. Der Web-Client bleibt nur als lesbare Referenz
+  im Repository und wird nicht weiterentwickelt. GitHub Pages gehört nicht zum Projektbetrieb.
 - Telemetrie-Effekte über SimHub (ABS, Schaltschlag, geschwindigkeitsabhängige Dämpfung)
   sind vorerst geparkt (siehe Backlog).
 - Die Alt/Neu-Schalter gelten **global** und sind nicht Teil der Profile. Profile
@@ -23,14 +25,17 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 0 | Prozess-Setup | ☑ |
-| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ |
+| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ 1a in `main`, Hardwaretests offen; 1b–1e geplant |
 | 2 | Plugin-Analyse | ☐ |
 | 3 | Achs-Pipeline, Schutz und 8 kHz | ☐ |
 | 4 | Signalkette vom Spiel | ☐ |
 | 5 | Stromregler | ☐ |
 | 6 | Encoder und Anticogging | ☐ |
 | 7 | Beobachter und Hands-off | ☐ |
-| S1 | Flash-Schutz in der Firmware, siehe unten | ☐ |
+| S1 | Flash-Schutz in der Firmware, siehe unten | ☐ in `main`, Hardwaretests offen |
+
+Die Hardwaretests zu 1a und S1 sind auf Wunsch des Nutzers bis nach weiteren Integrationen
+verschoben. Bis dahin sind beide Punkte nicht am Board nachgewiesen und bleiben ohne ☑.
 
 Reihenfolge: 0, dann 1. Danach beliebig. Ausführliche Spezifikationen der Pakete
 liegen unter `docs/packages/PKGn.md` und werden vor dem Start des jeweiligen Pakets
