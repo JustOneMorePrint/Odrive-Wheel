@@ -153,14 +153,14 @@ der Regel-Interrupt. Die PWM bleibt dann auf dem letzten Wert, und niemand regel
 
 - **Keine Flash-Operation, solange ein Motor aktiv ist.** Aktiv heißt auf irgendeiner Achse: Motor
   scharf, angeforderter Zustandswechsel noch nicht übernommen oder Achse nicht in IDLE.
-- **Kein Armen während einer Flash-Operation.** `Motor::arm` verweigert, die Achse landet ohne
-  Fehlercode wieder in IDLE.
+- **Kein Armen während einer Flash-Operation.** `Motor::arm` verweigert. Der Schutz führt dafür keinen
+  eigenen Fehlercode ein, die weitere Folge bestimmt der laufende Ablauf (siehe „Verweigertes Armen“).
 
-| Weg | Bei aktivem Motor |
+| Weg | Bei aktivem Motor, laut Code |
 |---|---|
 | `sys.save!`, `sys.save?` | Antwort `ERR`, `sys.savestat?` bleibt unverändert |
 | `sys.eetest!`, `sys.eetest?` | Antwort `ERR` |
-| `sys.eedump?` | Antwort `ERR`. Der Befehl schreibt trotz `?`: `EE_Init` und ein Testwert |
+| `sys.eedump?` | Antwort `ERR`. Der Befehl schreibt trotz `?` einen Testwert und kann über `EE_Init` löschen |
 | `sys.eeformat!`, `sys.eeformat?` | Antwort `ERR` |
 | `se` | Keine Wirkung und keine Antwort, wie `ss` |
 | `ss` | Unverändert, der Schutz stammt aus der Original-ODrive-Firmware |
@@ -169,9 +169,44 @@ der Regel-Interrupt. Die PWM bleibt dann auf dem letzten Wert, und niemand regel
 was jetzt gälte, wie viele Flash-Operationen seit dem Start abgelehnt wurden, der letzte Grund und
 wie viele Armen-Versuche in eine Flash-Operation fielen.
 
-Mit allen Achsen in IDLE verhalten sich die Befehle wie bisher. Beim Booten läuft
+Mit allen Achsen in IDLE verhalten sich die Befehle laut Code wie bisher. Beim Booten läuft
 `ffb_init_storage_early` weiter ohne Schutz, die Achsen-Threads starten erst danach. Neue
 Flash-Aufrufe fallen in `tests/host/test_flash_paths.sh` auf.
+
+### Verweigertes Armen
+
+`Motor::arm` gibt `false` zurück, die Aufrufer ignorieren das und sehen nur, dass `is_armed_` falsch
+bleibt. Danach greift die vorhandene Logik des jeweiligen Ablaufs, und die kann vorhandene Fehler
+melden. `armrefused` zählt jeden Fall. Laut Code:
+
+| Ablauf | Folge |
+|---|---|
+| Closed Loop, Lock-in-Spin, Index-Suche, Richtungssuche, Encoder-Offset, Homing | Bricht ab, Achse geht auf IDLE, kein neuer Fehler |
+| Hall-Polarität, Hall-Phase | Ebenso. `hall_polarity_calibrated` beziehungsweise `hall_edge_phcnt` sind dann aber schon zurückgesetzt |
+| Motorkalibrierung, Widerstand | Bricht ab und überschreibt `phase_resistance` im RAM ohne Messung: mit 0 Ω, bei `calibration_current` 0 mit NaN. Nur der NaN-Fall meldet `ERROR_PHASE_RESISTANCE_OUT_OF_RANGE` |
+| Motorkalibrierung, Induktivität | Würde `phase_inductance` auf NaN setzen und `ERROR_PHASE_INDUCTANCE_OUT_OF_RANGE` melden. Laut Logik nicht erreichbar, weil während einer Kalibrierung keine Flash-Operation startet |
+
+Das setzt voraus, dass die Zustandsanforderung eintrifft, während eine Flash-Operation läuft. Befehle
+über USB laufen nacheinander im selben Thread, dort lehnt zuerst die Flash-Sperre ab oder das
+Speichern ist schon fertig. Es bleiben andere Wege wie CAN oder UART. Ein danach gesendetes `ss` würde
+den überschriebenen Widerstand speichern, ein Neustart ohne `ss` stellt den gespeicherten Wert wieder
+her. Das Muster ist nicht neu, auch eine abgebrochene Messung überschreibt den Wert. S1 ergänzt einen
+weiteren Auslöser, die Abläufe selbst sind unverändert.
+
+### Nachweisstand
+
+Die Host-Tests belegen die Entscheidung und den Aufbau des Quelltexts, führen die Firmware aber nicht
+aus. Am Board ist S1 noch nicht geprüft, offen sind T2 und T3 aus
+[PR #3](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/3).
+
+Bei aktivem Motor werden am angetriebenen Lenkrad zum Testen keine Flash-Befehle gesendet, nur
+Statusabfragen. Bei versagender Sperre wären sie echte Flash-Zugriffe, und auch ein EEPROM-Seitenwechsel
+oder `EE_Init` können löschen. Softwaregrenzen wie `axis.maxtorque` oder `current_lim` sind dafür keine
+verlässliche Absicherung. Schreibtests laufen nur bei nachweislich inaktiven Achsen.
+
+Statusabfragen weisen die Wirkung der Sperre nicht nach. Auch nach T2 und T3 bleibt ungeprüft, ob die
+gebaute Firmware bei aktivem Motor wirklich ablehnt und ob `Motor::arm` während einer Flash-Operation
+verweigert. Ein möglicher zusätzlicher Versuch ist im PR beschrieben und nicht ausgeführt.
 
 ## Optionale Verzahnungen
 

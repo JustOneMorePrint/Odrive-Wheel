@@ -104,11 +104,13 @@ S1).
 
 | Datei | Prüft | Voraussetzung |
 |---|---|---|
-| `test_flash_guard.cpp` | Die Entscheidung `Odrive-Wheel/src/flash_guard.c` über alle Achsen-Zustände, beide Reihenfolgen des Wettlaufs mit dem Armen, und über den echten Parser die Antwort `ERR`, an der Plugin und Web-Client eine Ablehnung erkennen | g++ |
+| `test_flash_guard.cpp` | Die Entscheidung `Odrive-Wheel/src/flash_guard.c` über alle Achsen-Zustände, beide Reihenfolgen des Wettlaufs mit dem Armen, und über den echten Parser die Antwort `ERR` bei einer Ablehnung, mit Platzhalter-Handlern | g++ |
 | `test_flash_paths.sh` (läuft mit `check`) | Jeder Aufruf, der das Flash schreiben oder löschen kann, gegen die geprüfte Liste `flash_paths.expected`, mit Datei, Funktion und Anzahl. Dazu die Position des Schutzes in jedem Pfad zur Laufzeit und in `Motor::arm` | sh, awk, grep, find, sort |
 
-`test_flash_paths.sh` prüft Quelltext, weil dieser Code die HAL braucht. Ob der Schutz am Board wirkt,
-zeigt nur der Test in der PR-Beschreibung.
+`test_flash_paths.sh` prüft Quelltext, weil dieser Code die HAL braucht. Beide Tests führen die Firmware
+nicht aus, sie belegen also nicht, dass die gebaute Firmware bei aktivem Motor wirklich ablehnt. Das
+zeigt auch die Hardware-Anleitung nicht: Bei aktivem Motor sendet sie bewusst nur Statusabfragen
+(`docs/ROADMAP.md`, S1, „Nachweisstand“).
 
 Schlägt der Listenvergleich fehl, ist ein Flash-Aufruf neu oder hat sich verschoben. Dann zuerst
 entscheiden, ob er bei aktivem Motor laufen kann. Falls ja, gehört er zwischen
