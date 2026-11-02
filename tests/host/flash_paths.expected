@@ -1,0 +1,130 @@
+# Every call that can write or erase the MCU flash: file, enclosing function, symbol, count.
+# test_flash_paths.sh compares this with the firmware. A difference fails the test.
+#
+# Before you add a row: can this run while a motor is active? If so it must go through
+# odrive_bridge_flash_begin() and _end(), and test_flash_paths.sh must check that path.
+# `sh test_flash_paths.sh --print` lists the current state.
+
+# ---- At runtime, through commands. Every entry below asks the flash guard ------------------------
+
+# sys.save, sys.eetest, sys.eedump, sys.eeformat
+Odrive-Wheel/src/cmd_table.cpp - ffb_eedump 1
+Odrive-Wheel/src/cmd_table.cpp - ffb_eeformat 1
+Odrive-Wheel/src/cmd_table.cpp - ffb_eetest 1
+Odrive-Wheel/src/cmd_table.cpp - ffb_save_flash 1
+Odrive-Wheel/src/cmd_table.cpp h_sys_eedump ffb_eedump 1
+Odrive-Wheel/src/cmd_table.cpp h_sys_eeformat ffb_eeformat 1
+Odrive-Wheel/src/cmd_table.cpp h_sys_eetest ffb_eetest 1
+Odrive-Wheel/src/cmd_table.cpp h_sys_save ffb_save_flash 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eedump EE_Init 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eedump EE_WriteVariable 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eedump HAL_FLASH_Unlock 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eedump ffb_eedump 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eeformat EE_WriteVariable 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eeformat HAL_FLASHEx_Erase 2
+Odrive-Wheel/src/ffb_task.cpp ffb_eeformat HAL_FLASH_Program 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eeformat HAL_FLASH_Unlock 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eeformat ffb_eeformat 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eetest Flash_Write 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eetest HAL_FLASH_Unlock 1
+Odrive-Wheel/src/ffb_task.cpp ffb_eetest ffb_eetest 1
+Odrive-Wheel/src/ffb_task.cpp ffb_save_flash Flash_Write 17
+Odrive-Wheel/src/ffb_task.cpp ffb_save_flash HAL_FLASH_Unlock 1
+Odrive-Wheel/src/ffb_task.cpp ffb_save_flash ffb_save_flash 1
+Odrive-Wheel/src/ffb_task.cpp ffb_save_flash gpio_inputs_save 1
+Odrive-Wheel/src/ffb_task.cpp ffb_save_flash saveFlash 1
+
+# Only called from ffb_save_flash.
+Odrive-Wheel/src/EffectsCalculator.cpp EffectsCalculator::saveFlash Flash_Write 7
+Odrive-Wheel/src/EffectsCalculator.cpp EffectsCalculator::saveFlash saveFlash 1
+Odrive-Wheel/src/PersistentStorage.cpp PersistentStorage::saveFlash saveFlash 1
+Odrive-Wheel/src/gpio_inputs.cpp gpio_inputs_save Flash_Write 3
+Odrive-Wheel/src/gpio_inputs.cpp gpio_inputs_save gpio_inputs_save 1
+
+# ss and se. erase_configuration asks the guard. save_configuration has its own check from stock
+# ODrive, inside a critical section and followed by a reset, so nothing can arm during it.
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::erase_configuration NVM_erase 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::erase_configuration erase_configuration 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::save_configuration finish_store 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::save_configuration prepare_store 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::save_configuration save_configuration 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp ODrive::save_configuration start_store 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/communication/ascii_protocol.cpp AsciiProtocol::cmd_system_ctrl erase_configuration 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/communication/ascii_protocol.cpp AsciiProtocol::cmd_system_ctrl save_configuration 1
+
+# ---- At boot, before the axis threads start. No guard needed --------------------------------------
+
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp - ffb_init_storage_early 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/main.cpp rtos_main ffb_init_storage_early 1
+Odrive-Wheel/src/ffb_task.cpp ffb_init_storage_early EE_Format 1
+Odrive-Wheel/src/ffb_task.cpp ffb_init_storage_early EE_Init 1
+Odrive-Wheel/src/ffb_task.cpp ffb_init_storage_early EE_WriteVariable 1
+Odrive-Wheel/src/ffb_task.cpp ffb_init_storage_early HAL_FLASH_Unlock 1
+Odrive-Wheel/src/ffb_task.cpp ffb_init_storage_early ffb_init_storage_early 1
+Odrive-Wheel/src/ffb_task.cpp ffb_task_init ffb_init_storage_early 1
+
+# ---- The layers below. Only reached through the entries above --------------------------------------
+
+Odrive-Wheel/src/eeprom.c - EE_PageTransfer 1
+Odrive-Wheel/src/eeprom.c - EE_VerifyPageFullWriteVariable 1
+Odrive-Wheel/src/eeprom.c EE_Format EE_Format 1
+Odrive-Wheel/src/eeprom.c EE_Format HAL_FLASHEx_Erase 2
+Odrive-Wheel/src/eeprom.c EE_Format HAL_FLASH_Program 1
+Odrive-Wheel/src/eeprom.c EE_Init EE_Format 4
+Odrive-Wheel/src/eeprom.c EE_Init EE_Init 1
+Odrive-Wheel/src/eeprom.c EE_Init EE_VerifyPageFullWriteVariable 2
+Odrive-Wheel/src/eeprom.c EE_Init HAL_FLASHEx_Erase 6
+Odrive-Wheel/src/eeprom.c EE_Init HAL_FLASH_Program 4
+Odrive-Wheel/src/eeprom.c EE_PageTransfer EE_PageTransfer 1
+Odrive-Wheel/src/eeprom.c EE_PageTransfer EE_VerifyPageFullWriteVariable 2
+Odrive-Wheel/src/eeprom.c EE_PageTransfer HAL_FLASHEx_Erase 1
+Odrive-Wheel/src/eeprom.c EE_PageTransfer HAL_FLASH_Program 2
+Odrive-Wheel/src/eeprom.c EE_VerifyPageFullWriteVariable EE_VerifyPageFullWriteVariable 1
+Odrive-Wheel/src/eeprom.c EE_VerifyPageFullWriteVariable HAL_FLASH_Program 2
+Odrive-Wheel/src/eeprom.c EE_WriteVariable EE_PageTransfer 1
+Odrive-Wheel/src/eeprom.c EE_WriteVariable EE_VerifyPageFullWriteVariable 1
+Odrive-Wheel/src/eeprom.c EE_WriteVariable EE_WriteVariable 1
+Odrive-Wheel/inc/flash_helpers.h Flash_Init EE_Init 1
+Odrive-Wheel/inc/flash_helpers.h Flash_Init Flash_Init 1
+Odrive-Wheel/inc/flash_helpers.h Flash_ReadWriteDefault EE_WriteVariable 1
+Odrive-Wheel/inc/flash_helpers.h Flash_ReadWriteDefault Flash_ReadWriteDefault 1
+Odrive-Wheel/inc/flash_helpers.h Flash_Write EE_WriteVariable 1
+Odrive-Wheel/inc/flash_helpers.h Flash_Write Flash_Write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_commit NVM_commit 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_demo NVM_commit 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_demo NVM_init 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_demo NVM_start_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_demo NVM_write 2
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_erase NVM_erase 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_init NVM_init 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_start_write NVM_start_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_write HAL_FLASH_Program 3
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_write HAL_FLASH_Unlock 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c NVM_write NVM_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c erase HAL_FLASHEx_Erase 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c erase HAL_FLASH_Unlock 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c set_allocation_state HAL_FLASH_Program 2
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.c set_allocation_state HAL_FLASH_Unlock 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - NVM_commit 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - NVM_init 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - NVM_start_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - NVM_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - finish_store 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - prepare_store 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/nvm_config.hpp - start_store 1
+
+# ---- Declarations -----------------------------------------------------------------------------------
+
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.h - NVM_commit 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.h - NVM_erase 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.h - NVM_init 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.h - NVM_start_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/Drivers/STM32/stm32_nvm.h - NVM_write 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/odrive_main.h - erase_configuration 1
+ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/odrive_main.h - save_configuration 1
+Odrive-Wheel/inc/EffectsCalculator.h - saveFlash 1
+Odrive-Wheel/inc/PersistentStorage.h - saveFlash 1
+Odrive-Wheel/inc/eeprom.h - EE_Format 1
+Odrive-Wheel/inc/eeprom.h - EE_Init 1
+Odrive-Wheel/inc/eeprom.h - EE_WriteVariable 1
+Odrive-Wheel/inc/gpio_inputs.h - gpio_inputs_save 1

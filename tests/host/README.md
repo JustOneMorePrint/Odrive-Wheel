@@ -30,9 +30,12 @@ Aufräumen: `make -C tests/host clean`.
 Erfolgreicher Lauf:
 
 ```text
+test_arm_refusal.cpp: <n> checks, 0 failed
 test_example_clamp.cpp: 5 checks, 0 failed
+test_flash_guard.cpp: <n> checks, 0 failed
 test_build_info.sh: <n> checks, 0 failed, 0 skipped
 test_make_clean.sh: <n> checks, 0 failed
+test_flash_paths.sh: <n> checks, 0 failed
 ```
 
 Schlägt ein Check fehl, stehen Datei und Zeile in der Ausgabe, und `make` endet mit
@@ -103,3 +106,46 @@ Unter Windows, in der Shell „MSYS2 MINGW64“ und mit denselben Voraussetzunge
 ```bash
 MAKE=mingw32-make sh tests/host/check_firmware_clean.sh
 ```
+
+## Flash-Schutz
+
+Keine Flash-Operation bei aktivem Motor, kein Armen während einer Flash-Operation (`docs/ROADMAP.md`,
+S1).
+
+| Datei | Prüft | Voraussetzung |
+|---|---|---|
+| `test_flash_guard.cpp` | Die Entscheidung `Odrive-Wheel/src/flash_guard.c` über alle Achsen-Zustände, beide Reihenfolgen des Wettlaufs mit dem Armen, und über den echten Parser die Antwort `ERR` bei einer Ablehnung, mit Platzhalter-Handlern | g++ |
+| `test_arm_refusal.cpp` | Verweigertes Armen über die echten Produktionsfunktionen, siehe unten | g++, sh, awk |
+| `test_flash_paths.sh` (läuft mit `check`) | Jeder Aufruf, der das Flash schreiben oder löschen kann, gegen die geprüfte Liste `flash_paths.expected`, mit Datei, Funktion und Anzahl. Dazu die Position des Schutzes in jedem Pfad zur Laufzeit und in `Motor::arm` | sh, awk, grep, find, sort |
+
+`test_flash_paths.sh` prüft Quelltext, weil dieser Code die HAL braucht. Keiner dieser Tests führt die
+Firmware auf dem Zielprozessor aus, sie belegen also nicht, dass die gebaute Firmware bei aktivem Motor
+wirklich ablehnt. Das zeigt auch die Hardware-Anleitung nicht: Bei aktivem Motor sendet sie bewusst nur
+Statusabfragen (`docs/ROADMAP.md`, S1, „Nachweisstand“).
+
+Schlägt der Listenvergleich fehl, ist ein Flash-Aufruf neu oder hat sich verschoben. Dann zuerst
+entscheiden, ob er bei aktivem Motor laufen kann. Falls ja, gehört er zwischen
+`odrive_bridge_flash_begin()` und `odrive_bridge_flash_end()`, und `test_flash_paths.sh` muss diesen
+Pfad prüfen. Erst danach die Liste anpassen, den aktuellen Stand zeigt `sh test_flash_paths.sh --print`.
+
+### Verweigertes Armen: `test_arm_refusal.cpp`
+
+Der Test führt den echten Code aus, ohne die HAL und ohne Board:
+
+- `extract_prod_functions.sh` schreibt den unveränderten Text der Funktionen aus `motor.cpp`, `axis.cpp`,
+  `encoder.cpp`, `utils.cpp` und `odrive_bridge.cpp` nach `build/prod_arm_paths.inc`, mit `#line` auf die echten
+  Dateien. Fehlt eine Funktion, bricht der Test ab, statt weniger zu prüfen.
+- `flash_guard.c`, `foc.cpp` und `open_loop_controller.cpp` werden ganz eingebunden, `component.hpp`,
+  `phase_control_law.hpp`, `foc.hpp`, `open_loop_controller.hpp` und `utils.hpp` sind die echten Header.
+- `stubs/board.h` und `stubs/autogen/interfaces.hpp` ersetzen Hardware, RTOS und die Klassen um die Funktionen. Die
+  Mitgliedsnamen sind die echten, ob sie zu den echten Klassen passen, zeigt der Firmware-Build.
+- Eine Simulation läuft in `osDelay`: Ein Widerstand und eine Induktivität antworten den echten Messgesetzen, der
+  echte `OpenLoopController` dreht, Encoder und Hall folgen vereinfacht. So laufen auch die Erfolgswege durch.
+
+Geprüft werden für jeden der fünf `Motor::arm`-Aufrufer der verweigerte Start (Kalibrierwerte und Kennzeichen bleiben
+unverändert), der normale Erfolgsweg und, wo es das Verhalten gibt, der spätere Abbruch, der unverändert bleiben soll.
+Dazu kommen beide Richtungen des Wettlaufs zwischen Armen und Flash-Operation über die echte Bridge.
+
+**Grenzen:** Die Klassen sind Stubs, `Encoder::update` und das Motorverhalten sind vereinfacht, Interrupts gibt es
+nicht. Die Ergebnisse zeigen die Logik der Abläufe, nicht das Verhalten am Board. Der Compiler meldet zwei erwartete
+Warnungen, weil der Produktionstext für 32 Bit Zeiger nach `uint32_t` wandelt.

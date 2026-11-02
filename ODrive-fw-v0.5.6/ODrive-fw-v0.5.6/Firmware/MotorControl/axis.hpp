@@ -154,8 +154,10 @@ public:
 
     bool start_closed_loop_control();
     bool stop_closed_loop_control();
+    // [pkgS] on_armed runs once the motor is armed. What a caller changes for the spin belongs there:
+    // if the arm is refused during a flash operation, the spin returns false before that.
     bool run_lockin_spin(const LockinConfig_t &lockin_config, bool remain_armed,
-                std::function<bool(bool)> loop_cb = {} );
+                std::function<bool(bool)> loop_cb = {}, std::function<void()> on_armed = {} );
     bool run_closed_loop_control_loop();
     bool run_homing();
     bool run_idle_loop();

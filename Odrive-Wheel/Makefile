@@ -101,7 +101,8 @@ C_SOURCES_LOCAL = \
   src/usb_hid_2ffb_desc.c \
   src/eeprom.c \
   src/eeprom_addresses.c \
-  src/cmdparser.c
+  src/cmdparser.c \
+  src/flash_guard.c
 
 CPP_SOURCES_LOCAL = \
   src/usb_tinyusb_glue.cpp \

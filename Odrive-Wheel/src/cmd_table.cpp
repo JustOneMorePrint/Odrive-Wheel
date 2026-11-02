@@ -211,16 +211,16 @@ static int h_sys_eetest(uint8_t, CmdType t, const char*, char *r, size_t s) {
     if (t != CMD_TYPE_EXEC && t != CMD_TYPE_GET) return -1;
     uint16_t got = 0;
     int ok = ffb_eetest(0xABCD, &got);
+    if (ok < 0) return -1;  // [pkgS] refused by the flash guard
     snprintf(r, s, "%s want=0xABCD got=0x%04X", ok ? "PASS" : "FAIL", (unsigned)got);
     return 0;
 }
 
 // sys.eedump — diagnóstico bruto das pages e return codes EE
-extern "C" void ffb_eedump(char *buf, int bufsize);
+extern "C" int ffb_eedump(char *buf, int bufsize);
 static int h_sys_eedump(uint8_t, CmdType t, const char*, char *r, size_t s) {
     if (t != CMD_TYPE_GET) return -1;
-    ffb_eedump(r, (int)s);
-    return 0;
+    return ffb_eedump(r, (int)s);  // [pkgS] -1 = refused by the flash guard
 }
 
 // Phase 4.x — sys.vbusdiv: divisor de tensão pra leitura de VBUS.
@@ -242,10 +242,17 @@ static int h_sys_vbusdiv(uint8_t, CmdType t, const char *v, char *r, size_t s) {
 // error flags entre cada operação. Usar quando bootRC != 0 e sys.save! continua
 // falhando (caso típico: flash com flags PGAERR/PGSERR latched de operação
 // anterior, ou pages com 0x00 stuck do .bin antigo que não foi gap-fillado).
-extern "C" void ffb_eeformat(char *buf, int bufsize);
+extern "C" int ffb_eeformat(char *buf, int bufsize);
 static int h_sys_eeformat(uint8_t, CmdType t, const char*, char *r, size_t s) {
     if (t != CMD_TYPE_EXEC && t != CMD_TYPE_GET) return -1;
-    ffb_eeformat(r, (int)s);
+    return ffb_eeformat(r, (int)s);  // [pkgS] -1 = refused by the flash guard
+}
+
+// [pkgS] safe.status? — state of the flash guard (flash_guard.h): whether a flash operation would
+// run right now, how many were refused and why, how many arm attempts ran into a flash operation.
+static int h_safe_status(uint8_t, CmdType t, const char*, char *r, size_t s) {
+    if (t != CMD_TYPE_GET) return -1;
+    odrive_bridge_flash_status(r, s);
     return 0;
 }
 
@@ -1102,6 +1109,7 @@ const CmdEntry cmdtable[] = {
     { "sys",   "eetest",       h_sys_eetest },        // EEPROM low-level test
     { "sys",   "eedump",       h_sys_eedump },        // EEPROM raw status
     { "sys",   "eeformat",     h_sys_eeformat },      // EEPROM force format (escape hatch)
+    { "safe",  "status",       h_safe_status },       // [pkgS] flash guard state (read-only)
     { "sys",   "vbusdiv",      h_sys_vbusdiv },       // VBUS voltage divider (1-50)
     // GPIO inputs (1-4) — sintaxe: gpio.<inst>.<field>
     { "gpio",  "mode",         h_gpio_mode },         // 0/1/2/3 = off/button/axis/zerowheel

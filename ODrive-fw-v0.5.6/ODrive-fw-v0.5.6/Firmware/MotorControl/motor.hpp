@@ -123,6 +123,7 @@ public:
     bool is_armed_ = false;
     uint8_t armed_state_ = 0;
     bool is_calibrated_ = false; // Set in apply_config()
+    bool arm_refused_ = false; // [pkgS] The last arm() was refused because of a flash operation
     std::optional<Iph_ABC_t> current_meas_;
     Iph_ABC_t DC_calib_ = {0.0f, 0.0f, 0.0f};
     float dc_calib_running_since_ = 0.0f; // current sensor calibration needs some time to settle

@@ -293,11 +293,14 @@ void Encoder::set_circular_count(int32_t count, bool update_offset) {
 }
 
 bool Encoder::run_index_search() {
-    config_.use_index = true;
-    index_found_ = false;
-    set_idx_subscribe();
+    // [pkgS] Only once the motor is armed, a refused start keeps the setting and the found index.
+    auto on_armed = [this]() {
+        config_.use_index = true;
+        index_found_ = false;
+        set_idx_subscribe();
+    };
 
-    bool success = axis_->run_lockin_spin(axis_->config_.calibration_lockin, false);
+    bool success = axis_->run_lockin_spin(axis_->config_.calibration_lockin, false, {}, on_armed);
     return success;
 }
 
@@ -342,9 +345,12 @@ bool Encoder::run_hall_polarity_calibration() {
         return true;
     };
 
-    config_.hall_polarity_calibrated = false;
-    states_seen_count_.fill(0);
-    bool success = axis_->run_lockin_spin(lockin_config, false, loop_cb);
+    // [pkgS] Only once the motor is armed, a refused start keeps the calibration.
+    auto on_armed = [this]() {
+        config_.hall_polarity_calibrated = false;
+        states_seen_count_.fill(0);
+    };
+    bool success = axis_->run_lockin_spin(lockin_config, false, loop_cb, on_armed);
     sample_hall_states_ = false;
 
     if (success) {
@@ -407,10 +413,17 @@ bool Encoder::run_hall_phase_calibration() {
     // We should evaluate making thread execution synchronous with the control loops
     // at least optionally.
     // Perhaps the new loop_sync feature will give a loose timing guarantee that may be sufficient
-    calibrate_hall_phase_ = true;
-    config_.hall_edge_phcnt.fill(0.0f);
-    hall_phase_calib_seen_count_.fill(0);
-    bool success = axis_->run_lockin_spin(lockin_config, false, loop_cb);
+    // [pkgS] Only once the motor is armed, a refused start keeps the calibration.
+    auto on_armed = [this]() {
+        calibrate_hall_phase_ = true;
+        config_.hall_edge_phcnt.fill(0.0f);
+        hall_phase_calib_seen_count_.fill(0);
+    };
+    bool success = axis_->run_lockin_spin(lockin_config, false, loop_cb, on_armed);
+    // [pkgS] Nothing started, so the failure path below must not reset the edges to the defaults.
+    if (axis_->motor_.arm_refused_) {
+        return false;
+    }
     if (error_ & ERROR_ILLEGAL_HALL_STATE)
         success = false;
 
@@ -460,10 +473,6 @@ bool Encoder::run_offset_calibration() {
         return false;
     }
 
-    // We use shadow_count_ to do the calibration, but the offset is used by count_in_cpr_
-    // Therefore we have to sync them for calibration
-    shadow_count_ = count_in_cpr_;
-
     CRITICAL_SECTION() {
         // Reset state variables
         axis_->open_loop_controller_.Idq_setpoint_ = {0.0f, 0.0f};
@@ -494,7 +503,14 @@ bool Encoder::run_offset_calibration() {
     }
     axis_->wait_for_control_iteration();
 
-    axis_->motor_.arm(&axis_->motor_.current_control_);
+    // [pkgS] Refused during a flash operation: nothing started, so the position stays as it is.
+    if (!axis_->motor_.arm(&axis_->motor_.current_control_)) {
+        return false;
+    }
+
+    // We use shadow_count_ to do the calibration, but the offset is used by count_in_cpr_
+    // Therefore we have to sync them for calibration
+    shadow_count_ = count_in_cpr_;
 
     // go to start position of forward scan for start_lock_duration to get ready to scan
     for (size_t i = 0; i < (size_t)(start_lock_duration * 1000.0f); ++i) {
