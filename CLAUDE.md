@@ -104,8 +104,10 @@ das Testvorgehen in `docs/TESTING.md`.
 
 ## Konventionen
 
-- Code-Kommentare, Commit-Messages und Bezeichner: Englisch.
-- Doku für den Nutzer (`docs/`, PR-Beschreibungen, Testanleitungen): Deutsch.
+- Talking to the user: German.
+- User interface, identifiers, code comments, new or changed documentation, commit messages, PR
+  descriptions, test instructions and PR comments: English. Existing German documents are not
+  translated wholesale, only the parts that change.
 - Nicht ändern: `sys.swver` liefert absichtlich fest „1.17.0“ (Kompatibilität mit dem
   OpenFFBoard-Configurator). Zur Identifikation der Build-Version dient `sys.build?`
   (Git-Hash und Branch, angelegt im Setup-Schritt 0 der ROADMAP).

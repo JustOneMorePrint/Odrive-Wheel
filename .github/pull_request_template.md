@@ -1,31 +1,31 @@
-## Paket
+## Package
 
-Paket-Nr. und Name (siehe `docs/ROADMAP.md`):
+Package number and name (see `docs/ROADMAP.md`):
 
-## Was ändert sich
+## What changes
 
-- Neue Features und ihre Schalter (Befehl, Default = aus):
-- Geänderte Dateien (Firmware FFB / Firmware ODrive / Plugin):
-- Neue EEPROM-Adressen (im Block des Pakets, in `VirtAddVarTab` eingetragen):
-- Neue Befehle (`<präfix>.*`), inkl. `<präfix>.status?`:
+- New features and their switches (command, default = off):
+- Changed files (firmware FFB / firmware ODrive / plugin):
+- New EEPROM addresses (in the block of the package, entered in `VirtAddVarTab`):
+- New commands (`<prefix>.*`), including `<prefix>.status?`:
 
-## Checkliste
+## Checklist
 
-- [ ] Alle neuen Features standardmäßig aus; mit Schaltern aus Verhalten unverändert
-- [ ] Keine Änderung an ODrive-`Config_t` oder `odrive-interface.yaml`
-- [ ] `EE_LAYOUT_VERSION` unverändert
-- [ ] Neue Logik in eigenen Dateien, gemeinsame Dateien nur mit `// [pkgN]`-Blöcken
-- [ ] 8-kHz-Pfad ohne Heap/RTOS/printf/double, Laufzeit gemessen: ___ µs
-- [ ] Firmware baut, keine neuen Warnungen
-- [ ] Plugin baut
-- [ ] Größe vorher/nachher (`arm-none-eabi-size`): text ___ → ___, bss ___ → ___
-- [ ] Host-Tests (falls zutreffend) laufen
-- [ ] `docs/ROADMAP.md` Status aktualisiert
+- [ ] All new features off by default; with the switches off the behavior is unchanged
+- [ ] No change to ODrive `Config_t` or `odrive-interface.yaml`
+- [ ] `EE_LAYOUT_VERSION` unchanged
+- [ ] New logic in its own files, shared files only with `// [pkgN]` blocks
+- [ ] 8 kHz path without heap/RTOS/printf/double, measured runtime: ___ µs
+- [ ] Firmware builds, no new warnings
+- [ ] Plugin builds
+- [ ] Size before/after (`arm-none-eabi-size`): text ___ → ___, bss ___ → ___
+- [ ] Host tests (if applicable) pass
+- [ ] `docs/ROADMAP.md` status updated
 
-## Testanleitung für den Nutzer
+## Test instructions for the user
 
-### T2 – Schalter aus = identisch
+### T2 – Switches off = identical
 
-### T3 – Feature-Tests
+### T3 – Feature tests
 
-### Bekannte Grenzen / offene Punkte
+### Known limits / open points
