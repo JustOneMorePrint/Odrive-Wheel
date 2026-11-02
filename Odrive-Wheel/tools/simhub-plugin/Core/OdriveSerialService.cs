@@ -28,6 +28,10 @@ namespace OdriveWheel.SimHubPlugin
         /// and end with their next line.</summary>
         CancellationToken StopToken { get; }
 
+        /// <summary>A new connection is up, with its generation. Raised on a thread pool thread,
+        /// never on the worker, so a handler can send and wait for the reply.</summary>
+        event Action<int> Connected;
+
         void Start();
         void Shutdown(int timeoutMs);
     }
@@ -129,6 +133,8 @@ namespace OdriveWheel.SimHubPlugin
         // ---- Public API ------------------------------------------------------
 
         public CancellationToken StopToken => _stopCts.Token;
+
+        public event Action<int> Connected;
 
         public void Start()
         {
@@ -400,7 +406,7 @@ namespace OdriveWheel.SimHubPlugin
         private SerialResult ContextRefusal(SerialOperationContext context)
         {
             if (context == null) return null;
-            if (_stopLatched || _lastStop != context.LastStop)
+            if (context.BindsStop && (_stopLatched || _lastStop != context.LastStop))
                 return new SerialResult(SerialOutcome.BlockedByStop, detail: "software stop, not sent");
             if (Volatile.Read(ref _generation) != context.ConnectGeneration)
                 return new SerialResult(SerialOutcome.NotConnected, detail: "the connection changed, not sent");
@@ -781,10 +787,22 @@ namespace OdriveWheel.SimHubPlugin
             // Opened for a stop while released: not a connection for the other callers.
             if (!_wantReleased)
             {
-                Interlocked.Increment(ref _generation);
+                int generation = Interlocked.Increment(ref _generation);
                 _state = SerialConnectionState.Connected;
                 _log("connected on " + port);
+                RaiseConnected(generation);
             }
+        }
+
+        private void RaiseConnected(int generation)
+        {
+            var handlers = Connected;
+            if (handlers == null) return;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { handlers(generation); }
+                catch (Exception ex) { _log("connected handler: " + ex.Message); }
+            });
         }
 
         private void CloseTransport()
