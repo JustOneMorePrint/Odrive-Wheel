@@ -336,40 +336,70 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        private abstract class ForwardingParameters : IOdriveParameters
+        {
+            protected readonly Rig Rig;
+
+            protected ForwardingParameters(Rig rig) => Rig = rig;
+
+            public virtual ParameterResult Write(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.Write(path, value, protocol, priority, cancellation);
+            public ParameterResult Read(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.Read(path, protocol, priority, cancellation);
+            public virtual ParameterResult ExecOffb(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.ExecOffb(path, priority, cancellation);
+            public virtual ParameterResult SaveOdrive() => Rig.Parameters.SaveOdrive();
+            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.ReadAsync(path, protocol, priority, cancellation);
+            public Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation);
+            public Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+                => Rig.Parameters.ExecOffbAsync(path, priority, cancellation);
+            public Task<ParameterResult> SaveOdriveAsync() => Rig.Parameters.SaveOdriveAsync();
+        }
+
         /// <summary>Presses the stop right after a write has succeeded, between two lines of a
         /// profile. A stop during a line is the easy case, that line fails and nothing saves.</summary>
-        private sealed class StopBetweenLines : IOdriveParameters
+        private sealed class StopBetweenLines : ForwardingParameters
         {
-            private readonly Rig _rig;
             private int _writesLeft;
 
-            public StopBetweenLines(Rig rig, int writes)
+            public StopBetweenLines(Rig rig, int writes) : base(rig)
             {
-                _rig = rig;
                 _writesLeft = writes;
             }
 
-            public ParameterResult Write(string path, string value, FieldProtocol protocol,
-                                         CommandPriority priority = CommandPriority.Interactive,
-                                         CancellationToken cancellation = default)
+            public override ParameterResult Write(string path, string value, FieldProtocol protocol,
+                                                  CommandPriority priority = CommandPriority.Interactive,
+                                                  CancellationToken cancellation = default)
             {
-                var result = _rig.Parameters.Write(path, value, protocol, priority, cancellation);
-                if (--_writesLeft == 0) _rig.Service.RequestStop().WaitForResult(3000);
+                var result = base.Write(path, value, protocol, priority, cancellation);
+                if (--_writesLeft == 0) Rig.Service.RequestStop().WaitForResult(3000);
+                return result;
+            }
+        }
+
+        /// <summary>Counts the ss attempts. Can press the stop right after sys.save! has answered,
+        /// between the two lines of a save.</summary>
+        private sealed class SaveWatch : ForwardingParameters
+        {
+            public int SaveOdriveCalls;
+            public bool StopAfterExec;
+
+            public SaveWatch(Rig rig) : base(rig) { }
+
+            public override ParameterResult ExecOffb(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
+            {
+                var result = base.ExecOffb(path, priority, cancellation);
+                if (StopAfterExec) Rig.Service.RequestStop().WaitForResult(3000);
                 return result;
             }
 
-            public ParameterResult Read(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.Read(path, protocol, priority, cancellation);
-            public ParameterResult ExecOffb(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.ExecOffb(path, priority, cancellation);
-            public ParameterResult SaveOdrive() => _rig.Parameters.SaveOdrive();
-            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.ReadAsync(path, protocol, priority, cancellation);
-            public Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation);
-            public Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => _rig.Parameters.ExecOffbAsync(path, priority, cancellation);
-            public Task<ParameterResult> SaveOdriveAsync() => _rig.Parameters.SaveOdriveAsync();
+            public override ParameterResult SaveOdrive()
+            {
+                Interlocked.Increment(ref SaveOdriveCalls);
+                return base.SaveOdrive();
+            }
         }
 
         public static void Test_stop_between_two_lines_of_an_auto_apply_saves_nothing()
@@ -426,6 +456,124 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 var error = rig.Profiles.SaveToFlash();
                 Check.True(error != null && error.Contains("software stop"), "reported: " + error);
                 Check.Equal(0, rig.Board.CountLine("ss"), "ss is blocked");
+            }
+        }
+
+        // The old code sent ss whatever sys.save! had answered, and ss saves and reboots.
+        public static void Test_save_to_flash_sends_no_ss_when_the_board_refuses_the_save()
+        {
+            foreach (var reply in new[] { "ERR", "NOT_FOUND", "FAIL" })
+            {
+                SaveWatch watch = null;
+                using (var rig = new ProfileRig(parameters: r => watch = new SaveWatch(r)))
+                {
+                    rig.Board.ReplyOverride = line => line == "sys.save!" ? "[sys.save!|" + reply + "]" : null;
+
+                    var error = rig.Profiles.SaveToFlash();
+
+                    Check.True(error != null && error.StartsWith("sys.save!") && error.Contains(reply), reply + " reported: " + error);
+                    Check.Equal(0, watch.SaveOdriveCalls, reply + ": ss not attempted");
+                    Check.Lines(new[] { "sys.save!" }, rig.Board.Lines, reply + ": lines");
+                }
+            }
+        }
+
+        public static void Test_save_to_flash_sends_no_ss_after_a_timeout()
+        {
+            SaveWatch watch = null;
+            using (var rig = new ProfileRig(parameters: r => watch = new SaveWatch(r)))
+            {
+                rig.Board.SetValue("sys.save", "x");
+                rig.Board.MuteOffbChannel = true;
+
+                var error = rig.Profiles.SaveToFlash();
+
+                Check.True(error != null && error.StartsWith("sys.save!"), "reported: " + error);
+                Check.Equal(0, watch.SaveOdriveCalls, "ss not attempted");
+                Check.Lines(new[] { "sys.save!" }, rig.Board.Lines, "lines");
+            }
+        }
+
+        public static void Test_save_to_flash_sends_no_ss_after_a_link_failure()
+        {
+            var failures = new Action<ProfileRig>[]
+            {
+                rig => rig.Board.FailNextWrite = true,
+                rig => rig.Board.ReplyOverride = line =>
+                {
+                    if (line == "sys.save!") rig.Board.FailNextRead = true;
+                    return null;
+                },
+                rig =>
+                {
+                    rig.Rig.Service.ReleasePort();
+                    Check.True(Wait.Until(() => rig.Rig.Service.GetStatus().State == SerialConnectionState.Released), "released");
+                },
+            };
+            foreach (var fail in failures)
+            {
+                SaveWatch watch = null;
+                using (var rig = new ProfileRig(parameters: r => watch = new SaveWatch(r)))
+                {
+                    rig.Board.SetValue("sys.save", "x");
+                    fail(rig);
+
+                    var error = rig.Profiles.SaveToFlash();
+
+                    Check.True(error != null && error.StartsWith("sys.save!"), "reported: " + error);
+                    Check.Equal(0, watch.SaveOdriveCalls, "ss not attempted");
+                    Check.Equal(0, rig.Board.CountLine("ss"), "no ss on the wire");
+                }
+            }
+        }
+
+        public static void Test_stop_during_the_save_prevents_ss()
+        {
+            SaveWatch watch = null;
+            using (var rig = new ProfileRig(parameters: r => watch = new SaveWatch(r)))
+            {
+                rig.Board.SetValue("sys.save", "x");
+                rig.Board.MuteOffbChannel = true;
+                var saving = Task.Run(() => rig.Profiles.SaveToFlash());
+                Check.True(Wait.Until(() => rig.Board.CountLine("sys.save!") == 1), "the save should go out");
+
+                rig.Rig.Service.RequestStop().WaitForResult(3000);
+
+                Check.True(saving.Wait(5000), "the save should end");
+                Check.True(saving.Result != null && saving.Result.StartsWith("sys.save!") && saving.Result.Contains("software stop"), "reported: " + saving.Result);
+                Check.Equal(0, watch.SaveOdriveCalls, "ss not attempted");
+                Check.Equal(0, rig.Board.CountLine("ss"), "no ss on the wire");
+            }
+        }
+
+        public static void Test_stop_between_the_save_and_ss_blocks_ss()
+        {
+            SaveWatch watch = null;
+            using (var rig = new ProfileRig(parameters: r => watch = new SaveWatch(r)))
+            {
+                rig.Board.SetValue("sys.save", "x");
+                watch.StopAfterExec = true;
+
+                var error = rig.Profiles.SaveToFlash();
+
+                Check.True(error != null && error.StartsWith("ss:") && error.Contains("software stop"), "reported: " + error);
+                Check.Equal(0, rig.Board.CountLine("ss"), "no ss on the wire");
+            }
+        }
+
+        public static void Test_auto_apply_sends_no_ss_after_a_refused_save()
+        {
+            using (var rig = new ProfileRig())
+            {
+                rig.Settings.AutoLoadByGame = true;
+                rig.Settings.SaveToFlashOnAutoLoad = true;
+                rig.Board.ReplyOverride = line => line == "sys.save!" ? "[sys.save!|ERR]" : null;
+                OdriveProfileFile.Save(Path.Combine(rig.Folder, "Game.json"), "Game", new Dictionary<string, string> { ["axis.range"] = "540" });
+
+                rig.Profiles.MaybeAutoLoadForGame("Game");
+                Check.True(rig.Profiles.PendingAutoApply.Wait(3000), "the apply should end");
+
+                Check.Lines(new[] { "axis.range=540", "sys.save!" }, rig.Board.Lines, "lines");
             }
         }
 

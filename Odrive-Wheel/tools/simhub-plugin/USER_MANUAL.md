@@ -539,6 +539,9 @@ The **💾 Save to flash** button runs two commands in sequence:
    the OpenFFBoard's emulated EEPROM. Non-destructive.
 2. `ss` — persists ODrive config (`config.*`, `axis0.motor.*`,
    `axis0.encoder.*`) into flash NVM and **reboots the board**.
+   Sent only after `sys.save!` has answered `OK`. On an error, a timeout,
+   a lost connection or a software stop the plugin shows the error and
+   sends no `ss`, without retrying.
 
 FFB drops for ~1–2 seconds during the reboot. Don't do this mid-race.
 A confirmation dialog protects against accidental clicks.
@@ -547,10 +550,11 @@ If you only edited FFB/EQ parameters (not motor calibration), the
 reboot is technically unnecessary — but the plugin runs both for
 simplicity and matches what the HTML tool's unified Save button does.
 
-**Known limit:** the firmware ignores `ss` while the motor is armed and does
-not report that. The button then shows "saved", but only the FFB parameters
-were persisted. The ODrive editor will handle this properly; until then set
-the axis to IDLE first if you changed ODrive values. After a
+**Known limit:** `ss` has no reply, and the firmware ignores it while the motor
+is armed. The status line can therefore only say that `ss` was sent, not that
+the ODrive config was saved; a reboot of the board is the only sign that it
+took effect. The ODrive editor (planned, Package 1b) will handle this properly;
+until then set the axis to IDLE first if you changed ODrive values. After a
 [software stop](#software-stop), `ss` is refused until you press **Clear stop**.
 
 ---
@@ -564,7 +568,8 @@ detects the active sim change (game name goes from A → B), the plugin:
 2. Looks for `<GameName>.json` in your profiles folder.
 3. If found → applies it via the same serial-write path as manual
    apply.
-4. If **Also save to flash** is on → runs `sys.save! + ss` too.
+4. If **Also save to flash** is on and every field was accepted → runs
+   `sys.save!`, and `ss` only after `sys.save!` has answered `OK`.
 
 Naming examples:
 - `iRacing.json`

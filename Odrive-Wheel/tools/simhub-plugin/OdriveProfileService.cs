@@ -221,16 +221,22 @@ namespace OdriveWheel.SimHubPlugin
             return r;
         }
 
-        /// <summary>sys.save! (persists OpenFFBoard params) + ss (persists ODrive config, reboots).
-        /// Returns null if both went out, otherwise what failed. The firmware ignores ss
-        /// while the motor is armed and does not report that.</summary>
+        /// <summary>sys.save! (persists OpenFFBoard params), then ss (persists ODrive config, reboots)
+        /// only after sys.save! has answered OK. Returns what failed, or null if sys.save! answered
+        /// OK and ss went out. Null does not mean the ODrive config is saved: ss has no reply, and
+        /// the firmware ignores it while the motor is armed.</summary>
         public string SaveToFlash()
         {
-            _log("SaveToFlash: sys.save! + ss (device will reboot)");
+            _log("SaveToFlash: sys.save!");
             var save = _parameters.ExecOffb("sys.save");
+            if (!save.IsOk) return "sys.save!: " + save.Detail;
+            if (save.Value != "OK") return "sys.save!: unexpected reply " + save.Value;
+
+            _log("SaveToFlash: sys.save! OK, sending ss");
             var reboot = _parameters.SaveOdrive();
-            if (!save.IsOk)   return "sys.save!: " + save.Detail;
             if (!reboot.IsOk) return "ss: " + reboot.Detail;
+
+            _log("SaveToFlash: ss sent, the firmware does not confirm it");
             return null;
         }
 

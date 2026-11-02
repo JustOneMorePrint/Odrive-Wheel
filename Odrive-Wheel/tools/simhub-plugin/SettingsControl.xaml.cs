@@ -633,9 +633,10 @@ namespace OdriveWheel.SimHubPlugin
                     Dispatcher.Invoke(() => ApplyStatus.Text = "save error: " + ex.Message);
                     return;
                 }
+                // [pkgS] ss has no reply, so the status must not call the ODrive config saved.
                 Dispatcher.Invoke(() => ApplyStatus.Text = error != null
                     ? "save error: " + error
-                    : "saved. board rebooting…");
+                    : "sys.save! OK. ss sent, not confirmed by the firmware: the ODrive config is only saved if the board reboots.");
             });
         }
 
