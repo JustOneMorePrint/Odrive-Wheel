@@ -9,9 +9,10 @@ als lesbare Referenz im Repository und wird nicht weiterentwickelt, GitHub Pages
 nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die lokale Datei
 `Odrive-Wheel/tools/odrive-wheel.html` gemeint.
 
-**Stand:** 1a ist in `main`, die Hardwaretests dazu sind offen. Von 1b ist der lesende Teil
-umgesetzt und am Board noch ungeprüft ([Stand von 1b](#stand-von-1b)). Der Rest von 1b und 1c–1e
-sind geplant, diese Funktionen fehlen im Plugin also noch.
+**Status:** 1a is in `main`, its hardware tests are open. Of 1b, the read-only tabs, the power supply
+data and the editing of Power / Brake to RAM are implemented and not checked on the board
+([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin does not have
+those functions yet.
 
 ## Architektur
 
@@ -41,7 +42,7 @@ sind geplant, diese Funktionen fehlen im Plugin also noch.
   als mappbare Aktion: setzt die Achse sofort auf IDLE und hat Vorrang vor allen wartenden
   Befehlen. **Er ersetzt keinen Hardware-Not-Aus:** Er braucht eine funktionierende USB-
   Verbindung, und der Motor läuft danach frei aus, statt zu bremsen.
-- **Oberflächensprache:** Englisch wie das bestehende Plugin; Doku auf Deutsch.
+- **Language:** The interface is English, like the existing plugin. So is new or changed documentation, see `CLAUDE.md`.
 
 ## Sicherheitsregeln für alle Aktionen, die den Motor bewegen
 
@@ -66,18 +67,74 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | **1d – Quick-Start und Motor-Setup** | Assistent mit den 13 Schritten des Web-Clients; **Kt-Wizard**; **KTY84-Preset**; **Haltebremse**; **Moment-Drehzahl-Rechner**; Empfehlungen zu Strom-/PLL-Bandbreite und Feedforward | Kompletter Durchlauf mit dem XDrive Mini; Kt-Wizard-Ergebnis plausibel gegen Datenblatt |
 | **1e – DFU-Flasher** | Flashen aus dem Plugin, Quelle: lokale Datei oder neuestes Release dieses Forks; automatische Sicherung vor dem Flashen; geschützte Sektoren; Release-Workflow in der CI | Flashen einer PR-`.bin` klappt, FFB-Einstellungen und ODrive-Config bleiben erhalten, `sys.build?` zeigt den neuen Stand |
 
-## Stand von 1b
+## Status of 1b
 
-| Umfang | Umgesetzt | Am Board geprüft |
+| Scope | Implemented | Checked on the board |
 |---|---|---|
-| Parameter-Katalog für PSU/Bremswiderstand, Achse, Motor, Encoder, Controller und Status/Fehler | ja, gegen das Firmware-Interface geprüft | nein |
-| Lesende Tabs mit gezieltem Aktualisieren (Tab oder Gruppe), Klartext-Fehler, sichtbare Lesefehler, veraltete Werte | ja, gegen die Attrappe des Boards getestet | nein |
-| Werte schreiben, Speichern (`ss`), Fehler löschen, Config löschen, Zustandswechsel und Kalibrierungen | geplant | – |
-| Konsole, Export/Import | geplant | – |
+| Parameter catalog for PSU/brake, axis, motor, encoder, controller and status/errors | yes, checked against the firmware interface | no |
+| Read-only lists with targeted refresh (tab or group), decoded errors, visible read failures, outdated values | yes, tested against the simulated board | no |
+| Power supply data in the plugin settings | yes, tested without a board | does not touch the board |
+| Editing the ten `config.*` fields of Power / Brake, to RAM only | yes, tested against the simulated board | no |
+| Editing anything else, saving (`ss`) from the editor, clearing errors, erasing the config, state changes and calibrations | planned | – |
+| Console, export/import | planned | – |
 
-Die Tabs senden nur Lesebefehle: Die Lese-Logik bekommt ausschließlich einen Lese-Zugriff übergeben,
-`tests/plugin/EditorWindowTests.cs` prüft das auf der Leitung. Ohne Anforderung liest das Fenster
-nur die acht Werte mit `"poll": true`.
+The lists only read: their logic only gets a read delegate, and `tests/plugin/EditorWindowTests.cs`
+checks that on the wire. Without a request the window reads nothing but the eight values with
+`"poll": true`. The only way to write is the editor described next.
+
+## Power supply data and editing Power / Brake
+
+**Power supply data** is hardware data in the global plugin settings, `PowerSupplyData`, and not part
+of any profile. Entering, saving or loading it sends nothing to the board. It is DC supply current, not
+motor phase current, and nothing takes a board value from it. A short-time current is not a continuous
+limit, and no time-dependent current limit exists: the data is a basis for later roadmap features.
+Usable continuous current = continuous output current × (1 − current headroom / 100).
+
+**The editor** covers the ten `config.*` fields of the group Power / Brake, marked `"editable": true`
+in the catalog. `sys.vbusdiv` stays read-only, it calibrates the voltage measurement, and so do the
+communication parameters and all other tabs.
+
+| Step | What happens |
+|---|---|
+| Typing, selecting | Nothing is sent. |
+| Review | Sends nothing. All ten values must have been read on this connection and be clear. Shows old and new values. No modal dialog, it would block the stop button. |
+| Apply to RAM | Reads all ten values and the bus voltage again and stops if one differs from the review. Then, before each write: stop, connection and both axes (`current_state` is IDLE, `motor.is_armed` is 0, `requested_state` is 0). |
+| Write | One `w` line. The firmware has no positive answer, so this only means sent. |
+| Read back | The reply is compared as a float32 or as a boolean. |
+
+The outcomes of a write are `verified by readback`, `sent, not verified`, `sent, readback differs`,
+`refused by the firmware` and `not sent`. Older firmware rounds and cuts its replies, so a reply it could
+have produced never counts as verified, also when newer firmware sent it. A failure ends the run and
+names what already went out. There is no retry and no writing back.
+
+**Relations checked**, all taken from what the firmware does (`ODrive::do_fast_checks` in `main.cpp`,
+`update_brake_current` in `low_level.cpp`, the remarks in `odrive-interface.yaml`). No value is too high or
+too low on its own:
+
+- With the brake resistor enabled, `brake_resistance` must be above 0, the firmware stops otherwise.
+- `dc_bus_undervoltage_trip_level` below `dc_bus_overvoltage_trip_level`, and the measured bus voltage
+  between them, otherwise the firmware stops at once.
+- With the ramp enabled: brake resistor enabled and above 0 ohm, `ramp_start` below `ramp_end`, otherwise
+  the firmware disables the ramp. `ramp_start` above the measured bus voltage, because the ramp also runs
+  with the motors disarmed.
+- `dc_max_positive_current` not negative and `dc_max_negative_current` not positive, the firmware stops
+  at idle otherwise.
+- With the brake resistor enabled: `max_regen_current` not negative, and `dc_max_negative_current` greater
+  in magnitude.
+
+Each write is a state of its own, so the values go out in an order in which no step adds a problem.
+
+**Limits:**
+
+- The state checks run in the plugin, right before each write. They are no atomic safeguard: another
+  command source can change the state in between.
+- Only finite values can be entered, so `dc_max_positive_current` cannot go back to `inf` here. A reboot
+  restores the saved value, as nothing is saved.
+- `enable_brake_resistor` takes effect only after a reboot, says the firmware interface. The review points
+  this out.
+- A value written to RAM stays there without any further sign until the board reboots. The existing Save to
+  flash in the panel would persist it, the editor never does.
+- None of this has run on a board, in particular the `%f` parser of newlib-nano behind `w`.
 
 Befunde aus dem Abgleich, wichtig für die weiteren Teile von 1b. Maßgeblich ist das Firmware-Interface,
 nicht der Web-Client:
