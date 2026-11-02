@@ -347,29 +347,27 @@ namespace OdriveWheel.SimHubPlugin
         // round-trip.
         private void CommitField(ProfileField f, string val)
         {
-            var cli = _plugin?.SerialCli;
+            var parameters = _plugin?.Parameters;
             var svc = _plugin?.ProfileService;
-            if (cli == null || svc == null) return;
+            if (parameters == null || svc == null) return;
 
             ApplyStatus.Text = "writing " + f.Path + " = " + val + "…";
             Task.Run(() =>
             {
-                bool ok;
+                ParameterResult result;
                 try
                 {
-                    ok = f.Protocol == FieldProtocol.Openffb
-                        ? cli.WriteOffb(f.Path, val)
-                        : cli.WriteOdrive(f.Path, val);
+                    result = parameters.Write(f.Path, val, f.Protocol);
                 }
                 catch (Exception ex)
                 {
                     Dispatcher.Invoke(() => ApplyStatus.Text = "write error: " + ex.Message);
                     return;
                 }
-                if (ok) svc.PokeCache(f.Path, val);
+                if (result.IsOk) svc.PokeCache(f.Path, val);
                 Dispatcher.Invoke(() =>
                 {
-                    if (ok)
+                    if (result.IsOk)
                     {
                         ApplyStatus.Text = "✓ " + f.Path + " = " + val
                                          + "  (RAM only — use Save to flash to persist)";
@@ -382,8 +380,10 @@ namespace OdriveWheel.SimHubPlugin
                     }
                     else
                     {
-                        ApplyStatus.Text = "✗ " + f.Path
-                                         + " → rejected by firmware (invalid value?)";
+                        ApplyStatus.Text = "✗ " + f.Path + " → "
+                                         + (result.Status == ParameterStatus.Rejected
+                                            ? "rejected by firmware (invalid value?)"
+                                            : result.Detail);
                     }
                 });
             });
@@ -466,12 +466,12 @@ namespace OdriveWheel.SimHubPlugin
         {
             DeviceActionStatus.Text = "sending axis.zeroenc!…";
             DeviceActionStatus.Foreground = System.Windows.Media.Brushes.LightGray;
-            var cli = _plugin.SerialCli;
+            var parameters = _plugin.Parameters;
             System.Threading.Tasks.Task.Run(() =>
             {
-                string reply = null;
+                ParameterResult result = null;
                 string err   = null;
-                try { reply = cli.ExecOffb("axis.zeroenc"); }
+                try { result = parameters.ExecOffb("axis.zeroenc"); }
                 catch (Exception ex) { err = ex.Message; }
                 Dispatcher.Invoke(() =>
                 {
@@ -480,9 +480,9 @@ namespace OdriveWheel.SimHubPlugin
                         DeviceActionStatus.Text = "zero failed: " + err;
                         DeviceActionStatus.Foreground = System.Windows.Media.Brushes.IndianRed;
                     }
-                    else if (reply == null)
+                    else if (!result.IsOk)
                     {
-                        DeviceActionStatus.Text = "no reply — check SimHub log (port busy, device not present, or timeout)";
+                        DeviceActionStatus.Text = "zero failed: " + result.Detail;
                         DeviceActionStatus.Foreground = System.Windows.Media.Brushes.Orange;
                     }
                     else
@@ -516,9 +516,11 @@ namespace OdriveWheel.SimHubPlugin
                 }
                 var r = svc.ApplyProfile(p);
                 Dispatcher.Invoke(() =>
-                    ApplyStatus.Text = "'" + p.Name + "' — " + r.Ok + " ok"
-                                     + (r.Fail > 0 ? ", " + r.Fail + " failed" : "")
-                                     + " (not persisted; use Save to flash)"
+                    ApplyStatus.Text = r.Aborted
+                        ? "'" + p.Name + "' — stopped after " + r.Ok + " ok: " + r.Errors[r.Errors.Count - 1]
+                        : "'" + p.Name + "' — " + r.Ok + " ok"
+                          + (r.Fail > 0 ? ", " + r.Fail + " failed" : "")
+                          + " (not persisted; use Save to flash)"
                 );
             });
         }
@@ -624,14 +626,68 @@ namespace OdriveWheel.SimHubPlugin
             var svc = _plugin.ProfileService;
             System.Threading.Tasks.Task.Run(() =>
             {
-                try { svc.SaveToFlash(); }
+                string error;
+                try { error = svc.SaveToFlash(); }
                 catch (Exception ex)
                 {
                     Dispatcher.Invoke(() => ApplyStatus.Text = "save error: " + ex.Message);
                     return;
                 }
-                Dispatcher.Invoke(() => ApplyStatus.Text = "saved. board rebooting…");
+                Dispatcher.Invoke(() => ApplyStatus.Text = error != null
+                    ? "save error: " + error
+                    : "saved. board rebooting…");
             });
+        }
+
+        // [pkg1] Configuration window, port release and software stop. None of these
+        // handlers can block: the service only takes a request.
+        private void OnOpenConfigWindow(object sender, RoutedEventArgs e)
+            => _plugin?.ConfigWindow?.Show();
+
+        private void OnTogglePort(object sender, RoutedEventArgs e)
+        {
+            var serial = _plugin?.SerialService;
+            if (serial == null) return;
+            if (serial.GetStatus().State == SerialConnectionState.Released) serial.AcquirePort();
+            else serial.ReleasePort();
+        }
+
+        private void OnSoftwareStop(object sender, RoutedEventArgs e)
+            => _plugin?.SerialService?.RequestStop();
+
+        private void OnClearStop(object sender, RoutedEventArgs e)
+            => _plugin?.SerialService?.ClearStopLatch();
+
+        private void RefreshSerialStatus(OdriveTelemetrySnapshot snap)
+        {
+            var serial = _plugin?.SerialService;
+            if (serial == null) return;
+
+            var status = serial.GetStatus();
+            var connection = OdriveStatusText.Connection(status);
+
+            bool ok = connection.Severity == StatusSeverity.Ok;
+            SerialStatusLed.Fill = ok ? BrushOk : BrushWarn;
+            SetLedGlow(SerialLedGlow, ok ? ColorOk : ColorWarn, on: true);
+
+            var svc = _plugin.ProfileService;
+            var age = svc == null || svc.LastRefreshUtc == DateTime.MinValue
+                ? -1 : (int)(DateTime.UtcNow - svc.LastRefreshUtc).TotalSeconds;
+            SerialStatusText.Text = ok
+                ? connection.Text + (age < 0 ? " — no read yet" : " — read " + age + "s ago (cache authoritative)")
+                : connection.Text;
+
+            PortButton.Content = status.State == SerialConnectionState.Released ? "Take over port" : "Release port";
+
+            int? hidState = snap.Connected ? (int?)snap.AxisState : null;
+            var stop = OdriveStatusText.Stop(status, hidState);
+            StopStatusText.Text = stop.Text;
+            StopStatusText.Foreground = stop.Severity == StatusSeverity.Danger ? BrushDanger
+                                      : stop.Severity == StatusSeverity.Warning ? BrushWarn
+                                      : stop.Severity == StatusSeverity.Ok ? BrushOk
+                                      : System.Windows.Media.Brushes.LightGray;
+            StopStatusText.Visibility = stop.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            ClearStopButton.Visibility = status.StopLatched ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // ---- Profiles list --------------------------------------------------
@@ -689,26 +745,8 @@ namespace OdriveWheel.SimHubPlugin
                 HidStatusText.Text = snap.LastReportMillisAgo > 0 ? "stale" : "waiting for device…";
             }
 
-            // Serial status LED.
-            if (svc != null)
-            {
-                var port = svc.CurrentPortName;
-                if (!string.IsNullOrEmpty(port))
-                {
-                    SerialStatusLed.Fill = BrushOk;
-                    SetLedGlow(SerialLedGlow, ColorOk, on: true);
-                    var age = svc.LastRefreshUtc == DateTime.MinValue ? -1 : (int)(DateTime.UtcNow - svc.LastRefreshUtc).TotalSeconds;
-                    SerialStatusText.Text = age < 0
-                        ? $"{port} — no read yet"
-                        : $"{port} — initial read {age}s ago (cache authoritative)";
-                }
-                else
-                {
-                    SerialStatusLed.Fill = BrushWarn;
-                    SetLedGlow(SerialLedGlow, ColorWarn, on: true);
-                    SerialStatusText.Text = "COM port not discovered";
-                }
-            }
+            // [pkg1] Serial status from the connection service.
+            RefreshSerialStatus(snap);
 
             // Live HID readings
             LiveRate.Text     = snap.ReportRateHz.ToString("F0", CultureInfo.InvariantCulture);

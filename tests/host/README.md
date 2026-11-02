@@ -54,6 +54,15 @@ einem Fehlercode.
 `example_clamp.hpp` und `test_example_clamp.cpp` sind nur das Beispiel für dieses Gerüst.
 Sie können entfallen, sobald es echte Tests gibt.
 
+## Sync-Zeile des SimHub-Plugins
+
+`test_cmdparser_sync.cpp` bindet den echten Parser `Odrive-Wheel/src/cmdparser.c` ein und prüft die
+Zeile, mit der das Plugin den OpenFFBoard-Antwortweg synchronisiert: Sie ruft keinen Handler auf und
+wird mit `NOT_FOUND` samt vollständiger Marke beantwortet. Die Befehlstabelle ist ein Platzhalter,
+weil `cmd_table.cpp` die HAL braucht. Der Test liest deshalb zusätzlich den Quelltext dieser Datei,
+die Klasse der Sync-Zeile darf dort nicht vorkommen. Die Weiche in `process_line`
+(`ascii_protocol.cpp`) ist nur durch Lesen geprüft, sie hängt am ODrive-Code.
+
 ## Tests der Build-Kennung (`sys.build?`)
 
 Die Firmware meldet `<checkout>[-dirty] [head=<PR-Head>] branch=<Branch>`.

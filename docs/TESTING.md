@@ -13,6 +13,8 @@ Hardware-Tests nur vom Nutzer.
 
 ## Flashen
 
+- Läuft SimHub mit dem Plugin, zuerst dort **Release port** drücken. Das Plugin hält den
+  seriellen Port, solange es läuft.
 - Bevorzugt: Web-Client → Tab „DFU Flash“ → **Datei auswählen** mit der `.bin` aus dem
   PR-Build. Nicht „Fetch latest from GitHub“ verwenden, das lädt die Original-Firmware.
 - Alternative: `dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D odrive-wheel.bin`.
@@ -26,7 +28,7 @@ Hardware-Tests nur vom Nutzer.
 | Ebene | Was | Wer |
 |---|---|---|
 | T0 – Build | CI grün, keine neuen Warnungen, Größenänderung (`arm-none-eabi-size`) im PR | Claude |
-| T1 – Host-Tests | HAL-freie Logik-Module unter `tests/host/` mit g++ getestet | Claude |
+| T1 – Host-Tests | HAL-freie Logik-Module unter `tests/host/` mit g++ getestet, Plugin-Logik unter `tests/plugin/` gegen eine Attrappe des Boards | Claude |
 | T2 – Schalter aus | Verhalten identisch zum Stand vor dem Paket | Nutzer |
 | T3 – Feature an | Paketspezifische Tests aus der PR-Beschreibung | Nutzer |
 | T4 – Rückweg | Alte `.bin` flashen, Config wieder einspielen, alles läuft wie vorher | Nutzer (bei größeren Paketen) |
@@ -54,7 +56,8 @@ wird, woran man einen Fehler erkennt (z. B. Statusabfrage `<präfix>.status?`).
   `motor.config.current_lim` reduziert; erst nach erfolgreichem Test schrittweise erhöhen.
 - Beim Armen und bei den ersten Sekunden mit neuem Feature: Hände weg vom Lenkrad,
   Lenkrad frei drehbar, nichts im Schwenkbereich.
-- Not-Aus (Netzteil- bzw. Relais-Abschaltung) in Reichweite.
+- Not-Aus (Netzteil- bzw. Relais-Abschaltung) in Reichweite. Der Software-Stopp des Plugins
+  ersetzt ihn nicht.
 - Bei Paketen, die den Stromregler oder den 8-kHz-Loop betreffen (Pakete 3, 5, 6, 7):
   zuerst ohne Spiel, nur mit Force-Test bzw. Statusabfragen.
 - Nach jedem Test Fehlerzustand prüfen (Axis-, Motor-, Encoder-, Controller-Fehler).

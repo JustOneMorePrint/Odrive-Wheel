@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "parameters": [
+    { "path": "vbus_voltage",                   "protocol": "odrive", "type": "float",    "access": "read",  "unit": "V",  "group": "Power",    "tab": "status", "description": "DC bus voltage." },
+    { "path": "axis0.current_state",            "protocol": "odrive", "type": "axisState", "access": "read", "unit": "",   "group": "Axis",     "tab": "status", "description": "Current axis state. 1 is IDLE, 8 is closed loop." },
+    { "path": "axis0.error",                    "protocol": "odrive", "type": "bitmask",  "access": "read",  "unit": "",   "group": "Errors",   "tab": "status", "description": "Axis error bits." },
+    { "path": "axis0.motor.error",              "protocol": "odrive", "type": "bitmask",  "access": "read",  "unit": "",   "group": "Errors",   "tab": "status", "description": "Motor error bits." },
+    { "path": "axis0.encoder.error",            "protocol": "odrive", "type": "bitmask",  "access": "read",  "unit": "",   "group": "Errors",   "tab": "status", "description": "Encoder error bits." },
+    { "path": "axis0.controller.error",         "protocol": "odrive", "type": "bitmask",  "access": "read",  "unit": "",   "group": "Errors",   "tab": "status", "description": "Controller error bits." },
+    { "path": "sys.build",                      "protocol": "offb",   "type": "text",     "access": "read",  "unit": "",   "group": "Firmware", "tab": "status", "description": "Build id of the running firmware: checkout, optional PR head, branch." },
+    { "path": "axis0.motor.config.current_lim", "protocol": "odrive", "type": "float",    "access": "write", "unit": "A",  "min": 0,  "group": "Motor", "tab": "motor", "description": "Motor current limit, the hard cap on torque." },
+    { "path": "axis.maxtorque",                 "protocol": "offb",   "type": "float",    "access": "write", "unit": "Nm", "min": 0,  "group": "Force scale", "tab": "ffb-wheel", "description": "Maximum torque the FFB layer may request." },
+    { "path": "fx.master",                      "protocol": "offb",   "type": "integer",  "access": "write", "unit": "",   "min": 0, "max": 255, "group": "Effect gains", "tab": "ffb-effects", "description": "Master gain of the game effects." }
+  ]
+}

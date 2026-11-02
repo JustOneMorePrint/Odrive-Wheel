@@ -1,0 +1,26 @@
+name: Plugin Tests
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  plugin-tests:
+    # net48 and WPF. The plugin itself is not built here: it references the SimHub
+    # assemblies, which can't be redistributed. The tests don't need them.
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Build and run plugin tests
+      run: dotnet run --project tests/plugin -c Release

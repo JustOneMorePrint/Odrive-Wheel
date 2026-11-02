@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tests the plugin logic against a fake board. SerialPortTransport and WmiPortLocator
+       are deliberately not part of this project, so it cannot open a real port. It also
+       needs no SimHub installation, which is why it can run in CI. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- SimHubWPF.exe is a 32-bit process. -->
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>OdriveWheel.SimHubPlugin.Tests</RootNamespace>
+    <AssemblyName>OdriveWheel.Plugin.Tests</AssemblyName>
+    <PluginDir>..\..\Odrive-Wheel\tools\simhub-plugin</PluginDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(PluginDir)\Core\**\*.cs" LinkBase="Plugin\Core" />
+    <Compile Include="$(PluginDir)\Ui\**\*.cs" LinkBase="Plugin\Ui" />
+    <Compile Include="$(PluginDir)\OdriveErrorDecoder.cs" Link="Plugin\OdriveErrorDecoder.cs" />
+    <Compile Include="$(PluginDir)\OdrivePluginSettings.cs" Link="Plugin\OdrivePluginSettings.cs" />
+    <Compile Include="$(PluginDir)\OdriveProfileFields.cs" Link="Plugin\OdriveProfileFields.cs" />
+    <Compile Include="$(PluginDir)\OdriveProfileFile.cs" Link="Plugin\OdriveProfileFile.cs" />
+    <Compile Include="$(PluginDir)\OdriveProfileService.cs" Link="Plugin\OdriveProfileService.cs" />
+    <Page Include="$(PluginDir)\Ui\OdriveConfigWindow.xaml" Link="Plugin\Ui\OdriveConfigWindow.xaml" />
+    <EmbeddedResource Include="$(PluginDir)\Core\parameter-catalog.json"
+                      LogicalName="OdriveWheel.SimHubPlugin.parameter-catalog.json"
+                      Link="Plugin\Core\parameter-catalog.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The plugin uses the copy that ships with SimHub. CI has no SimHub. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>
