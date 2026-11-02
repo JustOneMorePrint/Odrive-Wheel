@@ -41,21 +41,26 @@ namespace OdriveWheel.SimHubPlugin
             string version = null, asciiFull = null, float32RoundTrip = null;
             foreach (var field in (reply ?? "").Split(' '))
             {
+                // Each field is judged on its own, so nothing after a bad one can make up for it.
                 int separator = field.IndexOf('=');
-                var name  = separator < 0 ? field : field.Substring(0, separator);
-                var value = separator < 0 ? null : field.Substring(separator + 1);
+                if (separator < 0) return Refuse("a field without a value: '" + field + "'", out problem);
+                var name  = field.Substring(0, separator);
+                var value = field.Substring(separator + 1);
                 switch (name)
                 {
                     case "v":
                         if (version != null) return Refuse("v appears twice", out problem);
+                        if (value != SchemaVersion) return Refuse("unknown schema version: " + value, out problem);
                         version = value;
                         break;
                     case "ascii_full":
                         if (asciiFull != null) return Refuse("ascii_full appears twice", out problem);
+                        if (!IsFlag(value)) return Refuse("invalid ascii_full: " + value, out problem);
                         asciiFull = value;
                         break;
                     case "float32_rt":
                         if (float32RoundTrip != null) return Refuse("float32_rt appears twice", out problem);
+                        if (!IsFlag(value)) return Refuse("invalid float32_rt: " + value, out problem);
                         float32RoundTrip = value;
                         break;
                     default:
@@ -64,9 +69,8 @@ namespace OdriveWheel.SimHubPlugin
             }
 
             if (version == null) return Refuse("no schema version", out problem);
-            if (version != SchemaVersion) return Refuse("unknown schema version: " + version, out problem);
-            if (!IsFlag(asciiFull)) return Refuse("no valid ascii_full", out problem);
-            if (!IsFlag(float32RoundTrip)) return Refuse("no valid float32_rt", out problem);
+            if (asciiFull == null) return Refuse("no ascii_full", out problem);
+            if (float32RoundTrip == null) return Refuse("no float32_rt", out problem);
 
             capabilities = new FirmwareCapabilities(connectGeneration, asciiFull == "1", float32RoundTrip == "1");
             return true;

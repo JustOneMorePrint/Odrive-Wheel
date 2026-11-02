@@ -51,6 +51,14 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 "v=1 ascii_full=1 float32_rt=1 extra=1", "extra v=1 ascii_full=1 float32_rt=1", "V=1 ascii_full=1 float32_rt=1",
                 "v=1  ascii_full=1 float32_rt=1", " v=1 ascii_full=1 float32_rt=1", "v=1 ascii_full=1 float32_rt=1 ",
                 "v=1,ascii_full=1,float32_rt=1", "v=1\tascii_full=1\tfloat32_rt=1",
+                // A field without a value, which a valid one after it must not heal, nor one before it
+                "v v=1 ascii_full=1 float32_rt=1", "v=1 v ascii_full=1 float32_rt=1",
+                "v=1 ascii_full ascii_full=1 float32_rt=1", "v=1 ascii_full=1 ascii_full float32_rt=1",
+                "v=1 ascii_full=1 float32_rt float32_rt=1", "v=1 ascii_full=1 float32_rt=1 float32_rt",
+                // An empty value or a bad one, likewise
+                "v= v=1 ascii_full=1 float32_rt=1", "v=2 v=1 ascii_full=1 float32_rt=1", "v=1 v=2 ascii_full=1 float32_rt=1",
+                "v=1 ascii_full= ascii_full=1 float32_rt=1", "v=1 ascii_full=2 ascii_full=1 float32_rt=1",
+                "v=1 ascii_full=1 float32_rt= float32_rt=1", "v=1 ascii_full=1 float32_rt=x float32_rt=1",
             };
             foreach (var reply in refused)
             {
@@ -212,6 +220,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             {
                 "ERR", "hu", "v=1", "v=1 ascii_full=1", "v=1 v=1 ascii_full=1 float32_rt=1", "v=1 ascii_full=1 ascii_full=1 float32_rt=1",
                 "v=2 ascii_full=1 float32_rt=1", "v=1 ascii_full=2 float32_rt=1", "v=1 ascii_full=1 float32_rt=1 extra=1",
+                "v v=1 ascii_full=1 float32_rt=1", "v=1 ascii_full ascii_full=1 float32_rt=1", "v=1 ascii_full=1 float32_rt float32_rt=1",
             };
             foreach (var reply in replies)
             {
