@@ -40,6 +40,20 @@ namespace OdriveWheel.SimHubPlugin
                 : state + " — ?";
         }
 
+        // ----- ODrive::Error (interfaces.hpp:89) ------------------------------
+
+        private static readonly (uint bit, string name)[] _systemBits = new[]
+        {
+            (0x00000001u, "CONTROL_ITERATION_MISSED"),
+            (0x00000002u, "DC_BUS_UNDER_VOLTAGE"),
+            (0x00000004u, "DC_BUS_OVER_VOLTAGE"),
+            (0x00000008u, "DC_BUS_OVER_REGEN_CURRENT"),
+            (0x00000010u, "DC_BUS_OVER_CURRENT"),
+            (0x00000020u, "BRAKE_DEADTIME_VIOLATION"),
+            (0x00000040u, "BRAKE_DUTY_CYCLE_NAN"),
+            (0x00000080u, "INVALID_BRAKE_RESISTANCE"),
+        };
+
         // ----- Axis::Error (interfaces.hpp:219) ------------------------------
 
         private static readonly (uint bit, string name)[] _axisBits = new[]
@@ -119,10 +133,24 @@ namespace OdriveWheel.SimHubPlugin
 
         // ----- Public API ----------------------------------------------------
 
+        public static string DecodeSystemError(uint mask)    => Decode(mask, _systemBits);
         public static string DecodeAxisError(uint mask)      => Decode(mask, _axisBits);
         public static string DecodeMotorError(uint mask)     => Decode(mask, _motorBits);
         public static string DecodeEncoderError(uint mask)   => Decode(mask, _encoderBits);
         public static string DecodeControllerError(uint mask)=> Decode(mask, _controllerBits);
+
+        public static string Decode(ParameterErrorKind kind, uint mask)
+        {
+            switch (kind)
+            {
+                case ParameterErrorKind.System:     return DecodeSystemError(mask);
+                case ParameterErrorKind.Axis:       return DecodeAxisError(mask);
+                case ParameterErrorKind.Motor:      return DecodeMotorError(mask);
+                case ParameterErrorKind.Encoder:    return DecodeEncoderError(mask);
+                case ParameterErrorKind.Controller: return DecodeControllerError(mask);
+                default: return "0x" + mask.ToString("X8");
+            }
+        }
 
         private static string Decode(uint mask, (uint bit, string name)[] table)
         {

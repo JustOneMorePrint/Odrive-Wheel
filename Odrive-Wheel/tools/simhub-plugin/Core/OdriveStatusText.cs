@@ -130,15 +130,17 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
-        /// <summary>A read result for the status list. A failed read never looks like "no error".</summary>
+        /// <summary>A read result for the parameter lists. A failed read never looks like "no error".</summary>
         public static string ReadValue(ParameterDefinition definition, ParameterResult result)
         {
             switch (result.Status)
             {
                 case ParameterStatus.Ok:
-                    return FormatValue(definition, result.Value);
+                    return OdriveParameterFormat.Format(definition, result.Value).Text;
                 case ParameterStatus.Rejected:
-                    return "not readable (" + result.Detail + ")";
+                    return IsUnsupported(result.Detail)
+                        ? "not supported by this firmware (" + result.Detail + ")"
+                        : "not readable (" + result.Detail + ")";
                 case ParameterStatus.Timeout:
                     return "no reply";
                 default:
@@ -146,19 +148,17 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
-        private static string FormatValue(ParameterDefinition definition, string value)
+        private static bool IsUnsupported(string detail) => detail == "invalid property" || detail == "NOT_FOUND";
+
+        /// <summary>The line above a parameter list after a refresh. Whatever was not read is named.</summary>
+        public static string Refresh(ParameterRefreshResult result, System.DateTime now)
         {
-            switch (definition.Type)
-            {
-                case ParameterType.Bitmask:
-                    return value == "0" ? "0 (no error)" : value;
-                case ParameterType.AxisState:
-                    return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int state)
-                        ? OdriveErrorDecoder.DecodeAxisState(state)
-                        : value;
-                default:
-                    return string.IsNullOrEmpty(definition.Unit) ? value : value + " " + definition.Unit;
-            }
+            int done = result.Succeeded + result.Failed;
+            if (result.AbortReason != null)
+                return "Aborted after " + done + " of " + result.Requested + ": " + result.AbortReason + ". The rest was not read.";
+
+            var at = "Read at " + now.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + ": " + result.Succeeded + " ok";
+            return result.Failed == 0 ? at + "." : at + ", " + result.Failed + " failed.";
         }
 
         private static string Ms(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture) + " ms";

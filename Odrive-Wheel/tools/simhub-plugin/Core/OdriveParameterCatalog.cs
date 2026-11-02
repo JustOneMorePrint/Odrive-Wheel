@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -17,12 +18,25 @@ namespace OdriveWheel.SimHubPlugin
         Bitmask,
         /// <summary>ODrive AXIS_STATE number.</summary>
         AxisState,
+        /// <summary>A number with names, see ParameterDefinition.EnumValues.</summary>
+        Enum,
     }
 
     public enum ParameterAccess
     {
         Read,
         Write,
+    }
+
+    /// <summary>Which table of OdriveErrorDecoder a bitmask belongs to.</summary>
+    public enum ParameterErrorKind
+    {
+        None,
+        System,
+        Axis,
+        Motor,
+        Encoder,
+        Controller,
     }
 
     public sealed class ParameterDefinition
@@ -37,12 +51,20 @@ namespace OdriveWheel.SimHubPlugin
         public string          Group       { get; internal set; }
         public string          Tab         { get; internal set; }
         public string          Description { get; internal set; }
+        public ParameterErrorKind ErrorKind { get; internal set; }
+        /// <summary>Names of an enum parameter, from the firmware interface.</summary>
+        public IReadOnlyDictionary<long, string> EnumValues { get; internal set; }
+        /// <summary>The status tab reads this once a second, everything else only on request.</summary>
+        public bool Polled     { get; internal set; }
+        /// <summary>Result of a calibration: the firmware accepts a write, but the web client refuses it.</summary>
+        public bool Calibrated { get; internal set; }
     }
 
     /// <summary>
     /// The parameters the plugin knows about, from the embedded parameter-catalog.json.
-    /// The tab names match the SCHEMA ids of the web client. Min and max are curated by
-    /// hand, the web client has neither.
+    /// The tab names match the SCHEMA ids of the web client. Paths, types, access and enum
+    /// names follow odrive-interface.yaml (tests/plugin/CatalogInterfaceTests.cs). Min and
+    /// max are curated by hand, the web client has neither.
     /// </summary>
     public sealed class OdriveParameterCatalog
     {
@@ -79,19 +101,38 @@ namespace OdriveWheel.SimHubPlugin
             if (!(root["parameters"] is JArray entries))
                 throw new InvalidDataException("catalog has no parameters array");
 
+            var enums = ParseEnums(root["enums"] as JObject);
             var parameters = new List<ParameterDefinition>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var token in entries)
             {
                 if (!(token is JObject entry)) throw new InvalidDataException("catalog entry is not an object");
-                var definition = ParseEntry(entry);
+                var definition = ParseEntry(entry, enums);
                 if (!seen.Add(definition.Path)) throw new InvalidDataException("duplicate path: " + definition.Path);
                 parameters.Add(definition);
             }
             return new OdriveParameterCatalog(parameters);
         }
 
-        private static ParameterDefinition ParseEntry(JObject entry)
+        private static Dictionary<string, IReadOnlyDictionary<long, string>> ParseEnums(JObject section)
+        {
+            var enums = new Dictionary<string, IReadOnlyDictionary<long, string>>(StringComparer.Ordinal);
+            if (section == null) return enums;
+            foreach (var definition in section.Properties())
+            {
+                var values = new Dictionary<long, string>();
+                foreach (var value in ((JObject)definition.Value).Properties())
+                {
+                    if (!long.TryParse(value.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out long number))
+                        throw new InvalidDataException("enum " + definition.Name + " has a value that is no number: " + value.Name);
+                    values[number] = (string)value.Value;
+                }
+                enums[definition.Name] = values;
+            }
+            return enums;
+        }
+
+        private static ParameterDefinition ParseEntry(JObject entry, Dictionary<string, IReadOnlyDictionary<long, string>> enums)
         {
             var path = Required(entry, "path", "(no path)");
             if (!OdriveProtocol.IsValidPath(path)) throw new InvalidDataException("invalid path: " + path);
@@ -108,10 +149,39 @@ namespace OdriveWheel.SimHubPlugin
                 Group       = Required(entry, "group", path),
                 Tab         = Required(entry, "tab", path),
                 Description = Required(entry, "description", path),
+                ErrorKind   = ParseErrorKind(entry.Value<string>("flags"), path),
+                Polled      = entry.Value<bool?>("poll") ?? false,
+                Calibrated  = entry.Value<bool?>("calibrated") ?? false,
             };
             if (definition.Min > definition.Max)
                 throw new InvalidDataException("min is above max: " + path);
+
+            var enumName = entry.Value<string>("enum");
+            if ((definition.Type == ParameterType.Enum) != (enumName != null))
+                throw new InvalidDataException("enum and type do not fit: " + path);
+            if (enumName != null)
+            {
+                if (!enums.TryGetValue(enumName, out var values))
+                    throw new InvalidDataException("unknown enum '" + enumName + "': " + path);
+                definition.EnumValues = values;
+            }
+            if (definition.ErrorKind != ParameterErrorKind.None && definition.Type != ParameterType.Bitmask)
+                throw new InvalidDataException("flags on a parameter that is no bitmask: " + path);
             return definition;
+        }
+
+        private static ParameterErrorKind ParseErrorKind(string text, string path)
+        {
+            switch (text)
+            {
+                case null:         return ParameterErrorKind.None;
+                case "system":     return ParameterErrorKind.System;
+                case "axis":       return ParameterErrorKind.Axis;
+                case "motor":      return ParameterErrorKind.Motor;
+                case "encoder":    return ParameterErrorKind.Encoder;
+                case "controller": return ParameterErrorKind.Controller;
+                default: throw new InvalidDataException("unknown flags '" + text + "': " + path);
+            }
         }
 
         private static string Required(JObject entry, string key, string path)
@@ -142,6 +212,7 @@ namespace OdriveWheel.SimHubPlugin
                 case "text":      return ParameterType.Text;
                 case "bitmask":   return ParameterType.Bitmask;
                 case "axisState": return ParameterType.AxisState;
+                case "enum":      return ParameterType.Enum;
                 default: throw new InvalidDataException("unknown type '" + text + "': " + path);
             }
         }

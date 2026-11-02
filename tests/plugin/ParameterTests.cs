@@ -210,6 +210,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Wrap(Entry(access: "none")),
                 Wrap(Entry(description: "")),
                 Wrap(Entry(more: ",\"min\":5,\"max\":1")),
+                Wrap(Entry(type: "enum")),
+                Wrap(Entry(type: "enum", more: ",\"enum\":\"nothing\"")),
+                Wrap(Entry(more: ",\"enum\":\"nothing\"")),
+                Wrap(Entry(more: ",\"flags\":\"axis\"")),
+                Wrap(Entry(type: "bitmask", more: ",\"flags\":\"nothing\"")),
+                "{\"enums\":{\"e\":{\"one\":\"a\"}},\"parameters\":[]}",
             };
             foreach (var json in bad)
             {

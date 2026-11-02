@@ -9,8 +9,9 @@ als lesbare Referenz im Repository und wird nicht weiterentwickelt, GitHub Pages
 nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die lokale Datei
 `Odrive-Wheel/tools/odrive-wheel.html` gemeint.
 
-**Stand:** 1a ist in `main`, die Hardwaretests dazu sind offen. 1b–1e sind geplant und nicht
-umgesetzt, die Funktionen fehlen im Plugin also noch.
+**Stand:** 1a ist in `main`, die Hardwaretests dazu sind offen. Von 1b ist der lesende Teil
+umgesetzt und am Board noch ungeprüft ([Stand von 1b](#stand-von-1b)). Der Rest von 1b und 1c–1e
+sind geplant, diese Funktionen fehlen im Plugin also noch.
 
 ## Architektur
 
@@ -64,6 +65,35 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | **1c – FFB-Einstellungen** | Tabs FFB Wheel, FFB Effects, FFB Filters inkl. 3-Band-EQ mit Kurve, Inputs/GPIO; Anbindung an das Profilsystem | Werte stimmen mit dem Web-Client überein; Profil anwenden/speichern wie bisher |
 | **1d – Quick-Start und Motor-Setup** | Assistent mit den 13 Schritten des Web-Clients; **Kt-Wizard**; **KTY84-Preset**; **Haltebremse**; **Moment-Drehzahl-Rechner**; Empfehlungen zu Strom-/PLL-Bandbreite und Feedforward | Kompletter Durchlauf mit dem XDrive Mini; Kt-Wizard-Ergebnis plausibel gegen Datenblatt |
 | **1e – DFU-Flasher** | Flashen aus dem Plugin, Quelle: lokale Datei oder neuestes Release dieses Forks; automatische Sicherung vor dem Flashen; geschützte Sektoren; Release-Workflow in der CI | Flashen einer PR-`.bin` klappt, FFB-Einstellungen und ODrive-Config bleiben erhalten, `sys.build?` zeigt den neuen Stand |
+
+## Stand von 1b
+
+| Umfang | Umgesetzt | Am Board geprüft |
+|---|---|---|
+| Parameter-Katalog für PSU/Bremswiderstand, Achse, Motor, Encoder, Controller und Status/Fehler | ja, gegen das Firmware-Interface geprüft | nein |
+| Lesende Tabs mit gezieltem Aktualisieren (Tab oder Gruppe), Klartext-Fehler, sichtbare Lesefehler, veraltete Werte | ja, gegen die Attrappe des Boards getestet | nein |
+| Werte schreiben, Speichern (`ss`), Fehler löschen, Config löschen, Zustandswechsel und Kalibrierungen | geplant | – |
+| Konsole, Export/Import | geplant | – |
+
+Die Tabs senden nur Lesebefehle: Die Lese-Logik bekommt ausschließlich einen Lese-Zugriff übergeben,
+`tests/plugin/EditorWindowTests.cs` prüft das auf der Leitung. Ohne Anforderung liest das Fenster
+nur die acht Werte mit `"poll": true`.
+
+Befunde aus dem Abgleich, wichtig für die weiteren Teile von 1b. Maßgeblich ist das Firmware-Interface,
+nicht der Web-Client:
+
+- **Antworten sind auf 9 Zeichen begrenzt.** `cmd_read_property` schreibt in einen Puffer von 10 Byte,
+  `to_string` kürzt ohne Meldung. Aus dem Fehlercode `2147483648` wird so `214748364`. Die Anzeige markiert
+  jede Zahl, die den Platz ausfüllt, und dekodiert sie nicht. **Für den Export heißt das:** Über `r` gelesene
+  große Zahlen und die Seriennummer kommen gekürzt an und dürfen nicht unbesehen in ein Backup.
+- **Falsche Namen im Web-Client:** Er nennt die Stream-Protokolle `1 FIBRE`, `2 ASCII`, `3 ASCII_AND_STDOUT`,
+  `4 STDOUT`. Die Firmware zählt `0 Fibre`, `1 Ascii`, `2 Stdout`, `3 AsciiAndStdout`. Der Katalog folgt der Firmware.
+- **Schreibbarkeit weicht ab:** `phase_resistance`, `phase_inductance`, `direction`, `phase_offset` und
+  `phase_offset_float` kann die Firmware schreiben, der Web-Client sperrt sie als Kalibrierergebnisse. Der
+  Katalog führt sie als `writable` mit `"calibrated": true`. Umgekehrt sind `anticogging.cogging_ratio` und
+  `anticogging.index` in der Firmware nur lesbar, obwohl der Web-Client sie zum Schreiben anbietet.
+- **Einheiten** stammen aus dem Interface. Nur wo es keine nennt, gilt die ausdrückliche Angabe des Web-Clients.
+  Parameter ohne Text in beiden Quellen tragen den Hinweis „No description in the firmware interface.“
 
 ## Details zu 1d
 

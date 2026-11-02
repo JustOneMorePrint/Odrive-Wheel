@@ -88,8 +88,12 @@ namespace OdriveWheel.SimHubPlugin
 
         public static bool IsOffbFailure(string value) => value == "ERR" || value == "NOT_FOUND";
 
-        /// <summary>True for the error texts of ascii_protocol.cpp. Note that a read can answer
-        /// "not implemented" just because the value does not fit its 10-byte buffer.</summary>
+        /// <summary>The most characters an ODrive read returns. cmd_read_property formats into a
+        /// 10-byte buffer and to_string cuts without any notice (protocol.hpp), so a longer number
+        /// arrives shortened and looks like a valid one.</summary>
+        public const int OdriveReadLimit = 9;
+
+        /// <summary>True for the error texts of ascii_protocol.cpp.</summary>
         public static bool IsOdriveFailure(string reply)
         {
             if (reply == null) return false;

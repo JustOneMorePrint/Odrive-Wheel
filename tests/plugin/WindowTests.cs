@@ -19,7 +19,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
         // process loads all of WPF, which took over 5 s on a CI machine.
         private const int WindowStartLimitMs = 20000;
 
-        private sealed class WindowRig : IDisposable
+        internal sealed class WindowRig : IDisposable
         {
             public Rig Rig { get; }
             public OdriveConfigWindowHost Host { get; }
@@ -55,7 +55,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
-        private static void Click(Button button)
+        internal static void Click(Button button)
         {
             var peer = new ButtonAutomationPeer(button);
             ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();

@@ -39,6 +39,9 @@ Ein hängender Test scheitert nach 30 s an seinem Zeitlimit.
 | `ResyncTests.cs` | Nichts Abgesagtes verlässt die Vorbereitung, gesendet und nicht gesendet bleiben unterscheidbar, auch bei einem Abbruch zu jedem Zeitpunkt; verspätete Antworten erreichen nach Timeout oder Abbruch nie den nächsten Befehl, in beliebigem zeitlichem Abstand und auf beiden Antwortwegen, auch bei wiederholten Lese- und Schreibbefehlen desselben Pfads |
 | `StopDisplayTests.cs` | Grün nur, solange der Stopp gilt und die Achse jetzt IDLE meldet; Widerspruch, fehlende Rückmeldung, neue Verbindung, gelöschte Sperre |
 | `ParameterTests.cs` | Beide Befehlsdialekte, Ablehnungen, ungültige Eingaben, Parameter-Katalog, Statustexte |
+| `CatalogInterfaceTests.cs` | Katalog gegen die Firmware: Pfade, Typen, Schreibbarkeit, Einheiten und Enum-Namen gegen `odrive-interface.yaml` (gelesen mit `YamlSubset.cs`), OpenFFBoard-Befehle gegen `cmd_table.cpp`, Fehlertabellen des Decoders, keine erfundenen Grenzwerte |
+| `ParameterReaderTests.cs` | Lese-Logik der Tabs: Anzeige je Typ, gekürzte Zahlen, Fehlerdecoder, nicht unterstützte Parameter, Timeouts, veraltete Werte, Stopp und Portfreigabe während des Lesens |
+| `EditorWindowTests.cs` | Lesende Tabs im echten Fenster: gezieltes Aktualisieren von Tab und Gruppe, begrenztes Polling, der Nachweis, dass jeder Button nur Lesebefehle sendet, Stop- und Port-Button während des Lesens |
 | `ProfileAndActionTests.cs` | Profil anwenden in exakt der bisherigen Zeilenfolge, Spielwechsel, Save to flash, Profildatei, Inc/Dec-Aktionen |
 | `WindowTests.cs` | Echtes WPF-Fenster auf eigenem Thread, Stop-Button per UI-Automation, modaler Dialog auf einem anderen Thread, Schließen während des Starts, Bereich „Extensions“ |
 
