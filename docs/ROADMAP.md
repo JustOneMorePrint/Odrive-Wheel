@@ -91,6 +91,7 @@ No write of any kind to the board.
 | Protection: E-stop input, status output | 3 | Wiring | Setting |
 | Protection: supply limiter | 3 | Power supply data | Setting |
 | Protection: I²t model | 3 | Thermal data of the motor, off without it | Setting |
+| Protection: firmware side of the stop latch, refusal of values that must not change while armed (`docs/FOUNDATIONS.md`) | 3, new | – | None |
 | Mutex between USB callback and FFB thread | 4, brought forward | – | None |
 | Controls and status for these, `hap.*` | 3 | – | – |
 
