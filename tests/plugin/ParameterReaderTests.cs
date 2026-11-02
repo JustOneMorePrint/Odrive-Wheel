@@ -22,7 +22,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
 
             public OdriveParameterReader NewReader(OdriveParameterReader.ReadParameter read)
-                => new OdriveParameterReader(read, Rig.Service.GetStatus, () => Rig.Service.StopToken);
+                => new OdriveParameterReader(read, Rig.Service.GetStatus);
 
             public ParameterRefreshResult Refresh(params string[] paths) => RefreshAsync(paths).Result;
 
@@ -307,6 +307,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 };
                 var paths = Catalog.InTab("encoder").Select(p => p.Path).ToArray();
                 Check.True(paths[1] == "axis0.encoder.config.cpr", "second parameter of the tab");
+                int generation = rig.Rig.Service.GetStatus().ConnectGeneration;
 
                 var result = rig.Refresh(paths);
 
@@ -314,7 +315,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.Equal(paths.Length - 2, result.NotReached, "the rest is not read");
                 Check.Equal(0, rig.Board.CountLine("r axis0.encoder.config.bandwidth"), "nothing goes out after it");
 
-                rig.Rig.WaitConnected();
+                // The read can report the failure just before the status shows it.
+                Check.True(Wait.Until(() =>
+                {
+                    var status = rig.Rig.Service.GetStatus();
+                    return status.IsConnected && status.ConnectGeneration > generation;
+                }), "reconnected");
                 Check.Equal(ParameterReadState.Outdated, rig.Get(paths[0]).State, "what was read belongs to the old connection");
             }
         }
@@ -340,7 +346,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.True(ticket.WrittenAfterMs < 300, "written after " + ticket.WrittenAfterMs + " ms");
 
                 Check.True(running.Wait(3000), "the refresh should end");
-                Check.Equal("software stop", running.Result.AbortReason, "reason");
+                Check.True(running.Result.AbortReason != null && running.Result.AbortReason.Contains("software stop"), "reason: " + running.Result.AbortReason);
                 Check.True(running.Result.NotReached > paths.Length / 2, "not reached: " + running.Result.NotReached);
 
                 var afterStop = rig.Board.Lines.SkipWhile(l => l != "w axis0.requested_state 1").ToArray();
@@ -373,6 +379,74 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.Equal("software stop", result2.AbortReason, "reason");
                 Check.Equal(parameters.Count - 2, result2.NotReached, "not reached");
                 Check.True(!rig.Board.Lines.Contains("r " + parameters[2].Path), "the third never went out");
+            }
+        }
+
+        // The service answers a running read at once, its stop token only follows when the
+        // worker gets to the stop. Going by the token, this was "cancelled" depending on timing.
+        public static void Test_a_read_cancelled_by_the_stop_names_the_stop()
+        {
+            using (var rig = new ReaderRig())
+            {
+                var reader = rig.NewReader((p, priority, cancellation) =>
+                {
+                    rig.Rig.Service.RequestStop();
+                    return Task.FromResult(new ParameterResult(ParameterStatus.Cancelled, detail: "software stop, not sent"));
+                });
+
+                var result = reader.RefreshAsync(Catalog.InTab("encoder").ToList(), CommandPriority.Batch, CancellationToken.None).Result;
+
+                Check.Equal("software stop", result.AbortReason, "reason");
+            }
+        }
+
+        public static void Test_a_refresh_during_a_running_stop_reads_nothing()
+        {
+            using (var rig = new ReaderRig())
+            {
+                rig.Board.StallWrites();
+                rig.Rig.Service.RequestStop();
+                int reads = 0;
+                var reader = rig.NewReader((p, priority, cancellation) =>
+                {
+                    Interlocked.Increment(ref reads);
+                    return rig.Rig.Parameters.ReadAsync(p.Path, p.Protocol, priority, cancellation);
+                });
+
+                var result = reader.RefreshAsync(Catalog.InTab("encoder").ToList(), CommandPriority.Batch, CancellationToken.None).Result;
+
+                Check.Equal(0, reads, "no read");
+                Check.Equal("software stop", result.AbortReason, "reason");
+            }
+        }
+
+        // Reading stays possible after a stop, the latch only blocks what can start the motor.
+        public static void Test_a_finished_stop_does_not_end_the_next_refresh()
+        {
+            using (var rig = new ReaderRig())
+            {
+                Check.True(rig.Rig.Service.RequestStop().WaitForResult(3000), "the stop should finish");
+                Check.True(rig.Rig.Service.GetStatus().StopLatched, "latched");
+
+                var result = rig.Refresh("vbus_voltage", "axis0.error");
+
+                Check.Equal(null, result.AbortReason, "complete");
+                Check.Equal(2, result.Succeeded, "both read");
+            }
+        }
+
+        public static void Test_cancelling_is_not_called_a_stop()
+        {
+            using (var rig = new ReaderRig())
+            {
+                var parameters = Catalog.InTab("encoder").ToList();
+                var before = rig.Reader.RefreshAsync(parameters, CommandPriority.Batch, new CancellationToken(true)).Result;
+                Check.Equal("cancelled", before.AbortReason, "before the first read");
+
+                var reader = rig.NewReader((p, priority, cancellation)
+                    => Task.FromResult(new ParameterResult(ParameterStatus.Cancelled, detail: "cancelled, not sent")));
+                var during = reader.RefreshAsync(parameters, CommandPriority.Batch, CancellationToken.None).Result;
+                Check.Equal("cancelled, not sent", during.AbortReason, "during a read");
             }
         }
 

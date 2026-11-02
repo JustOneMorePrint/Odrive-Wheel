@@ -76,7 +76,7 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | Konsole, Export/Import | geplant | – |
 
 Die Tabs senden nur Lesebefehle: Die Lese-Logik bekommt ausschließlich einen Lese-Zugriff übergeben,
-`tests/plugin/ParameterReaderTests.cs` prüft das auf der Leitung. Ohne Anforderung liest das Fenster
+`tests/plugin/EditorWindowTests.cs` prüft das auf der Leitung. Ohne Anforderung liest das Fenster
 nur die acht Werte mit `"poll": true`.
 
 Befunde aus dem Abgleich, wichtig für die weiteren Teile von 1b. Maßgeblich ist das Firmware-Interface,

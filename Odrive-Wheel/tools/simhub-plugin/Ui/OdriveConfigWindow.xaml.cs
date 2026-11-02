@@ -46,8 +46,7 @@ namespace OdriveWheel.SimHubPlugin
             _log          = log ?? (_ => { });
             _reader       = new OdriveParameterReader(
                 (parameter, priority, cancellation) => _parameters.ReadAsync(parameter.Path, parameter.Protocol, priority, cancellation),
-                _serial.GetStatus,
-                () => _serial.StopToken);
+                _serial.GetStatus);
             _polledParameters = catalog.Parameters.Where(p => p.Polled).ToList();
 
             StopDisclaimerText.Text = OdriveStatusText.StopDisclaimer;

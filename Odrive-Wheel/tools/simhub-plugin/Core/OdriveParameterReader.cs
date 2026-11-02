@@ -70,21 +70,21 @@ namespace OdriveWheel.SimHubPlugin
         // must not be asked for a whole tab.
         internal const int MaxTimeoutsInARow = 2;
 
+        private const string StopReason = "software stop";
+
         private static readonly ParameterReading NeverRead =
             new ParameterReading(ParameterReadState.NotRead, "—", StatusSeverity.Neutral, null, -1);
 
         private readonly ReadParameter _read;
         private readonly Func<SerialStatus> _getStatus;
-        private readonly Func<CancellationToken> _getStopToken;
         private readonly ConcurrentDictionary<string, ParameterReading> _readings
             = new ConcurrentDictionary<string, ParameterReading>(StringComparer.Ordinal);
         private int _version;
 
-        public OdriveParameterReader(ReadParameter read, Func<SerialStatus> getStatus, Func<CancellationToken> getStopToken)
+        public OdriveParameterReader(ReadParameter read, Func<SerialStatus> getStatus)
         {
-            _read         = read ?? throw new ArgumentNullException(nameof(read));
-            _getStatus    = getStatus ?? throw new ArgumentNullException(nameof(getStatus));
-            _getStopToken = getStopToken ?? throw new ArgumentNullException(nameof(getStopToken));
+            _read      = read ?? throw new ArgumentNullException(nameof(read));
+            _getStatus = getStatus ?? throw new ArgumentNullException(nameof(getStatus));
         }
 
         /// <summary>Changes with every stored result. The connection can change a reading too.</summary>
@@ -112,58 +112,61 @@ namespace OdriveWheel.SimHubPlugin
         {
             int succeeded = 0, failed = 0, timeoutsInARow = 0;
             string abortReason = null;
+            var stopAtStart = _getStatus().LastStop;
 
-            // The next stop cancels this token, a stop between two reads included.
-            var stopToken = _getStopToken();
-            using (var cancel = CancellationTokenSource.CreateLinkedTokenSource(stopToken, cancellation))
+            foreach (var parameter in parameters)
             {
-                foreach (var parameter in parameters)
+                if (cancellation.IsCancellationRequested)
                 {
-                    if (cancel.IsCancellationRequested)
-                    {
-                        abortReason = CancelReason(stopToken);
-                        break;
-                    }
+                    abortReason = "cancelled";
+                    break;
+                }
 
-                    // Taken before the read: if the connection changes during it, the value counts
-                    // for the old one and shows as outdated rather than as current.
-                    var status = _getStatus();
-                    if (!status.IsConnected)
-                    {
-                        abortReason = OdriveStatusText.Connection(status).Text;
-                        break;
-                    }
+                // Taken before the read: if the connection changes during it, the value counts
+                // for the old one and shows as outdated rather than as current.
+                var status = _getStatus();
+                if (StopInterferes(status, stopAtStart))
+                {
+                    abortReason = StopReason;
+                    break;
+                }
+                if (!status.IsConnected)
+                {
+                    abortReason = OdriveStatusText.Connection(status).Text;
+                    break;
+                }
 
-                    var result = await _read(parameter, priority, cancel.Token).ConfigureAwait(false);
+                var result = await _read(parameter, priority, cancellation).ConfigureAwait(false);
 
-                    // Nothing was learned, so the previous reading stays as it is.
-                    if (result.Status == ParameterStatus.Cancelled)
-                    {
-                        abortReason = CancelReason(stopToken);
-                        break;
-                    }
+                // Nothing was learned, so the previous reading stays as it is.
+                if (result.Status == ParameterStatus.Cancelled)
+                {
+                    abortReason = StopInterferes(_getStatus(), stopAtStart) ? StopReason : result.Detail ?? "cancelled";
+                    break;
+                }
 
-                    timeoutsInARow = result.Status == ParameterStatus.Timeout ? timeoutsInARow + 1 : 0;
-                    if (Store(parameter, result, status.ConnectGeneration)) succeeded++;
-                    else failed++;
+                timeoutsInARow = result.Status == ParameterStatus.Timeout ? timeoutsInARow + 1 : 0;
+                if (Store(parameter, result, status.ConnectGeneration)) succeeded++;
+                else failed++;
 
-                    if (result.Status == ParameterStatus.Unavailable)
-                    {
-                        abortReason = result.Detail ?? "no connection";
-                        break;
-                    }
-                    if (timeoutsInARow >= MaxTimeoutsInARow)
-                    {
-                        abortReason = "the board does not answer";
-                        break;
-                    }
+                if (result.Status == ParameterStatus.Unavailable)
+                {
+                    abortReason = result.Detail ?? "no connection";
+                    break;
+                }
+                if (timeoutsInARow >= MaxTimeoutsInARow)
+                {
+                    abortReason = "the board does not answer";
+                    break;
                 }
             }
             return new ParameterRefreshResult(parameters.Count, succeeded, failed, abortReason);
         }
 
-        private static string CancelReason(CancellationToken stopToken)
-            => stopToken.IsCancellationRequested ? "software stop" : "cancelled";
+        // The ticket counts from the moment of the request. StopToken is no use for this: only the
+        // worker cancels it, which can be after the running read has already come back cancelled.
+        private static bool StopInterferes(SerialStatus status, StopTicket stopAtStart)
+            => status.LastStop != stopAtStart || (stopAtStart != null && !stopAtStart.IsFinished);
 
         private bool Store(ParameterDefinition parameter, ParameterResult result, int connectGeneration)
         {
