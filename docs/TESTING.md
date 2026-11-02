@@ -31,6 +31,9 @@ Hardware-Tests nur vom Nutzer.
 | T3 – Feature an | Paketspezifische Tests aus der PR-Beschreibung | Nutzer |
 | T4 – Rückweg | Alte `.bin` flashen, Config wieder einspielen, alles läuft wie vorher | Nutzer (bei größeren Paketen) |
 
+Die Host-Tests führen auch Produktionsfunktionen aus, mit Stubs für Hardware und umgebende Klassen
+(`tests/host/README.md`). Sie zeigen die Logik der Abläufe und ersetzen keinen Test am Board.
+
 ### T2 – „Schalter aus = identisch“ prüfen
 
 1. Mit der vorherigen Firmware: festen Ablauf im Force-Test fahren (z. B. Konstantkraft-
@@ -55,4 +58,7 @@ wird, woran man einen Fehler erkennt (z. B. Statusabfrage `<präfix>.status?`).
 - Bei Paketen, die den Stromregler oder den 8-kHz-Loop betreffen (Pakete 3, 5, 6, 7):
   zuerst ohne Spiel, nur mit Force-Test bzw. Statusabfragen.
 - Nach jedem Test Fehlerzustand prüfen (Axis-, Motor-, Encoder-, Controller-Fehler).
+- Am angetriebenen Lenkrad bei aktivem Motor keine Flash-Befehle zum Testen senden (`sys.save`, `sys.eetest`,
+  `sys.eedump`, `sys.eeformat`, `ss`, `se`), auch nicht zum Prüfen einer Sperre. Bei versagender Sperre wären es echte
+  Flash-Zugriffe, Softwaregrenzen für Moment und Strom schützen dann nicht verlässlich.
 - Bei unerwartetem Verhalten: Schalter aus, Fehler notieren, im PR melden.
