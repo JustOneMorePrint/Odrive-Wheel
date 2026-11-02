@@ -349,10 +349,10 @@ namespace OdriveWheel.SimHubPlugin.Tests
             public virtual ParameterResult ExecOffb(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
                 => Rig.Parameters.ExecOffb(path, priority, cancellation);
             public virtual ParameterResult SaveOdrive() => Rig.Parameters.SaveOdrive();
-            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => Rig.Parameters.ReadAsync(path, protocol, priority, cancellation);
-            public Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
-                => Rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation);
+            public Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default, SerialOperationContext context = null)
+                => Rig.Parameters.ReadAsync(path, protocol, priority, cancellation, context);
+            public Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default, SerialOperationContext context = null)
+                => Rig.Parameters.WriteAsync(path, value, protocol, priority, cancellation, context);
             public Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive, CancellationToken cancellation = default)
                 => Rig.Parameters.ExecOffbAsync(path, priority, cancellation);
             public Task<ParameterResult> SaveOdriveAsync() => Rig.Parameters.SaveOdriveAsync();

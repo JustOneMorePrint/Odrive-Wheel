@@ -45,10 +45,12 @@ namespace OdriveWheel.SimHubPlugin
     {
         Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol,
                                         CommandPriority priority = CommandPriority.Interactive,
-                                        CancellationToken cancellation = default);
+                                        CancellationToken cancellation = default,
+                                        SerialOperationContext context = null);
         Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol,
                                          CommandPriority priority = CommandPriority.Interactive,
-                                         CancellationToken cancellation = default);
+                                         CancellationToken cancellation = default,
+                                         SerialOperationContext context = null);
         Task<ParameterResult> ExecOffbAsync(string path, CommandPriority priority = CommandPriority.Interactive,
                                             CancellationToken cancellation = default);
         Task<ParameterResult> SaveOdriveAsync();
@@ -93,16 +95,17 @@ namespace OdriveWheel.SimHubPlugin
 
         public async Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol,
                                                      CommandPriority priority = CommandPriority.Interactive,
-                                                     CancellationToken cancellation = default)
+                                                     CancellationToken cancellation = default,
+                                                     SerialOperationContext context = null)
         {
             if (!OdriveProtocol.IsValidPath(path))
                 return new ParameterResult(ParameterStatus.InvalidInput, detail: "invalid path: " + path);
 
             var request = protocol == FieldProtocol.Openffb
                 ? new SerialRequest(OdriveProtocol.OffbRead(path), ReplyMode.OffbEcho, ReadTimeoutMs, priority,
-                                    OdriveProtocol.OffbEcho(path, '?'), cancellation)
+                                    OdriveProtocol.OffbEcho(path, '?'), cancellation, context)
                 : new SerialRequest(OdriveProtocol.OdriveRead(path), ReplyMode.OdriveLine, ReadTimeoutMs, priority,
-                                    cancellation: cancellation);
+                                    cancellation: cancellation, context: context);
 
             var result = await _serial.SendAsync(request).ConfigureAwait(false);
             return protocol == FieldProtocol.Openffb ? MapOffb(result) : MapOdriveRead(result);
@@ -110,7 +113,8 @@ namespace OdriveWheel.SimHubPlugin
 
         public async Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol,
                                                       CommandPriority priority = CommandPriority.Interactive,
-                                                      CancellationToken cancellation = default)
+                                                      CancellationToken cancellation = default,
+                                                      SerialOperationContext context = null)
         {
             if (!OdriveProtocol.IsValidPath(path))
                 return new ParameterResult(ParameterStatus.InvalidInput, detail: "invalid path: " + path);
@@ -121,13 +125,13 @@ namespace OdriveWheel.SimHubPlugin
             {
                 var request = new SerialRequest(OdriveProtocol.OffbWrite(path, value), ReplyMode.OffbEcho,
                                                 OffbWriteTimeoutMs, priority, OdriveProtocol.OffbEcho(path, '='),
-                                                cancellation);
+                                                cancellation, context);
                 return MapOffb(await _serial.SendAsync(request).ConfigureAwait(false));
             }
             else
             {
                 var request = new SerialRequest(OdriveProtocol.OdriveWrite(path, value), ReplyMode.SilenceIsOk,
-                                                OdriveWriteSilenceMs, priority, cancellation: cancellation);
+                                                OdriveWriteSilenceMs, priority, cancellation: cancellation, context: context);
                 var result = await _serial.SendAsync(request).ConfigureAwait(false);
                 if (result.Outcome == SerialOutcome.Silence) return new ParameterResult(ParameterStatus.Ok, value, lineWritten: true);
                 if (result.Outcome == SerialOutcome.Reply)

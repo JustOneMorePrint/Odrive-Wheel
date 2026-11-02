@@ -29,5 +29,8 @@ namespace OdriveWheel.SimHubPlugin
         public double ClipFraction       { get; set; } = 0.95;
         public double ClipWindowSeconds  { get; set; } = 30.0;
         public double PowerWindowSeconds { get; set; } = 60.0;
+
+        // [pkg1] Hardware data of the power supply. Global, not part of any profile, never sent to the board.
+        public PowerSupplyData PowerSupply { get; set; } = new PowerSupplyData();
     }
 }

@@ -25,7 +25,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 0 | Prozess-Setup | ☑ |
-| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ 1a in `main`, Hardwaretests offen; 1b: lesende Tabs umgesetzt, am Board ungeprüft; Rest von 1b und 1c–1e geplant |
+| 1 | Plugin-Basis (Web-Client-Ersatz), Teilschritte 1a–1e, siehe `docs/packages/PKG1.md` | ☐ 1a in `main`, hardware tests open; 1b: read-only tabs, power supply data and Power / Brake editing to RAM implemented, not checked on the board; rest of 1b and 1c–1e planned |
 | 2 | Plugin-Analyse | ☐ |
 | 3 | Achs-Pipeline, Schutz und 8 kHz | ☐ |
 | 4 | Signalkette vom Spiel | ☐ |

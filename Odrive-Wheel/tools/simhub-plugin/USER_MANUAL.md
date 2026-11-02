@@ -170,9 +170,9 @@ ago the last bulk read completed.
 Below the rows:
 
 - **Open configuration window** — the separate window with the status
-  values, the read-only ODrive tabs, the software stop and the Extensions
-  tab. It runs on its own UI thread, so a busy SimHub or a SimHub dialog does
-  not block it. See [Configuration window](#configuration-window).
+  values, the ODrive tabs, the power supply data, the software stop and the
+  Extensions tab. It runs on its own UI thread, so a busy SimHub or a SimHub
+  dialog does not block it. See [Configuration window](#configuration-window).
 - **Release port / Take over port** — the plugin holds the COM port while
   it runs. Release it before you connect the HTML tool or start a flash from
   there. While released, profiles and actions report that the port is released.
@@ -330,9 +330,10 @@ it did not reach stays unread.
 Tabs: **Status**, **PSU / Brake**, **Axis**, **Motor**, **Encoder**,
 **Controller** and **Extensions**.
 
-**These tabs only read.** They send read commands and change nothing on the
-board. Writing values, saving, clearing errors, erasing the configuration,
-calibrations, the console and import/export are planned (Package 1b).
+**The parameter lists only read.** They send read commands and change nothing
+on the board. The only way to write is the Power / Brake editor described below.
+Editing anything else, clearing errors, erasing the configuration, calibrations,
+the console and import/export are planned (Package 1b).
 
 Implemented and tested against a simulated board. **Not tested on a real board
 yet.**
@@ -365,6 +366,72 @@ can be lost, so `100.00000` means 100.
 Newer firmware also writes floats with up to nine significant digits, so `25`,
 `0.100000001` or `1.17549435e-38` instead of `25.000000`, `0.100000` or `0.000000`.
 The units and the meaning of the values are the same.
+
+### Power supply data
+
+The **PSU / Brake** tab starts with what you know about your power supply: DC
+output voltage, continuous output current, current headroom and, if your supply
+has it, a short-time current with its maximum duration. Leave what you do not know
+empty, nothing is assumed. Decimals take a point, not a comma.
+
+**Usable continuous current** = continuous output current × (1 − current headroom
+/ 100), for example 20 A with 10 % headroom gives 18 A.
+
+**Save to plugin settings** keeps this in the SimHub plugin settings on this PC. It
+is not part of any profile and **nothing goes to the board**: saving here is not
+saving the board configuration. This is DC supply current, not motor phase current,
+and no board value is taken from it. A short-time current is not a continuous limit,
+and the plugin has no time-dependent current limit: this data is the basis for later
+features.
+
+### Editing Power / Brake (RAM only)
+
+Below the power supply data you can change the ten `config.*` values of the group
+Power / Brake. `sys.vbusdiv` and the communication values stay read-only.
+
+1. Press **Refresh these values**. Without a current and exact value for all ten, there
+   is no review.
+2. Type the new values and tick their fields. Typing sends nothing. A boolean is 0 or 1.
+   Use at most two decimals if you can, see below.
+3. Press **Review selected changes**. The summary shows old and new values in the order
+   they will be written, and whatever speaks against them. The new value is the float32
+   the firmware will store, which can differ slightly from what you typed. A review
+   sends nothing, and any further edit needs a new one.
+4. Press **Apply to RAM**. The stop button and **Release port** keep working.
+
+Before each write the plugin checks that both axes are IDLE, not armed and without
+a pending state request. If an axis is active or an answer is missing, it stops. It
+does not disarm anything by itself. **These checks are no lock:** another command
+source can still change the state between the check and the write.
+
+| Result | Meaning |
+|---|---|
+| `verified by readback` | The board reports exactly the float32 or boolean that was written. |
+| `sent, not verified (…)` | The line went out, but the value is not confirmed. |
+| `sent, readback differs (…)` | The line went out and the board reports another value. |
+| `refused by the firmware (…)` | The firmware answered with an error. |
+| `not sent` | The line never went out. |
+
+A write has no answer of its own, so only the readback can confirm it. Each next
+write rests on the one before, so **anything but `verified by readback` ends the run**,
+and the result names what already went out. It is not repeated and not undone. A
+software stop, **Release port** or a new connection ends it as well, also if it comes
+while a command is on its way: nothing more goes out, and a reply that comes in after
+it confirms nothing.
+
+**Unclear values:** older firmware rounds and cuts what it reads, and a value like
+`56.000000` or `123.45678` could come from that. The relations cannot be judged from
+such a value, so the review refuses it and names the field. On older firmware that
+is nearly every float. On current firmware it is rare, but it happens: `32.012` reads
+`32.012001`, which looks the same. Values with at most two decimals do not read like
+this. While one of the ten fields holds such a value, the editor stays refused, until
+a reboot restores the saved value or something else changes it.
+
+**Applied values are in RAM only.** A reboot restores the saved values. The editor
+never saves to the board. If you want to keep them, that is **Save to flash** in the
+panel, which saves everything currently in RAM. `enable_brake_resistor` takes effect only
+after a reboot, and enabling it without a connected brake resistor can break the power
+supply.
 
 ---
 

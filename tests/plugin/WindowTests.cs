@@ -25,15 +25,17 @@ namespace OdriveWheel.SimHubPlugin.Tests
             public OdriveConfigWindowHost Host { get; }
             public int Created;
 
-            public WindowRig(params Func<IFeaturePanel>[] panels)
+            public WindowRig(params Func<IFeaturePanel>[] panels) : this(null, null, panels) { }
+
+            public WindowRig(Action<FakeBoard> prepare, IPowerSupplyStore powerSupplyStore, params Func<IFeaturePanel>[] panels)
             {
-                Rig = new Rig();
+                Rig = new Rig(prepare: prepare);
                 Host = new OdriveConfigWindowHost(() =>
                 {
                     Interlocked.Increment(ref Created);
                     return new OdriveConfigWindow(Rig.Service, Rig.Parameters, OdriveParameterCatalog.LoadEmbedded(),
                                                   () => Rig.HidState, m => Console.WriteLine("window: " + m),
-                                                  panels.Length > 0 ? panels : null);
+                                                  panels.Length > 0 ? panels : null, powerSupplyStore);
                 }, m => Console.WriteLine("host: " + m));
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 Host.Show();

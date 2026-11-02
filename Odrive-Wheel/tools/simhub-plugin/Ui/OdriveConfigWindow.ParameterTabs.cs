@@ -7,8 +7,8 @@ using System.Windows.Media;
 
 namespace OdriveWheel.SimHubPlugin
 {
-    // The parameter lists of the window, all built from the catalog. They only read:
-    // the only way to the board from here is the read delegate of OdriveParameterReader.
+    // The parameter lists of the window, all built from the catalog. They only read: the only way to the
+    // board from here is the read delegate of OdriveParameterReader. Writing lives in the PowerBrake part.
     public partial class OdriveConfigWindow
     {
         private const string StatusTab = "status";
@@ -71,7 +71,7 @@ namespace OdriveWheel.SimHubPlugin
 
         private async void RefreshParameters(string tab, IReadOnlyList<ParameterDefinition> parameters)
         {
-            if (_refreshing || _closed) return;
+            if (_refreshing || _applying || _closed) return;
 
             _refreshing = true;
             SetRefreshButtonsEnabled(false);
@@ -113,6 +113,7 @@ namespace OdriveWheel.SimHubPlugin
                 row.Value.Foreground = TextBrush(reading.Severity);
                 row.ReadAt.Text      = reading.ReadAt?.ToString("HH:mm:ss") ?? "";
             }
+            UpdatePowerBrakeCurrentValues();
         }
 
         // ---- Building --------------------------------------------------------
@@ -126,6 +127,11 @@ namespace OdriveWheel.SimHubPlugin
             foreach (var tab in EditorTabs)
             {
                 var stack = new StackPanel { Margin = new Thickness(16, 4, 16, 16) };
+                if (tab.Id == PowerBrakeTab)
+                {
+                    BuildPowerSupplySection(stack);
+                    BuildPowerBrakeEditor(stack);
+                }
                 BuildParameterList(stack, tab.Id, tab.CommonPrefix, catalog.InTab(tab.Id).ToList());
                 MainTabs.Items.Insert(insertAt++, new TabItem
                 {
@@ -150,7 +156,9 @@ namespace OdriveWheel.SimHubPlugin
             {
                 Text   = tab == StatusTab
                     ? "The errors, the axis state, the bus voltage and the build id update every second, the rest when you press Refresh. Editing follows later."
-                    : "Read-only: this tab reads when you press Refresh and changes nothing on the board. Editing follows later.",
+                    : tab == PowerBrakeTab
+                        ? "This list only reads, when you press Refresh. The Power / Brake values are edited in the section above, the others stay read-only."
+                        : "Read-only: this tab reads when you press Refresh and changes nothing on the board. Editing follows later.",
                 Style  = (Style)FindResource("Muted"),
                 Margin = new Thickness(0, 6, 0, 0),
             });
@@ -242,6 +250,7 @@ namespace OdriveWheel.SimHubPlugin
         private static string AccessToolTip(ParameterDefinition parameter)
         {
             if (parameter.Calibrated) return "Set by a calibration. The firmware would accept a write, the web client refuses it.";
+            if (parameter.Editable) return "The firmware allows writing this. Edit it under Edit Power / Brake above.";
             return parameter.Access == ParameterAccess.Read
                 ? "The firmware does not allow writing this."
                 : "The firmware allows writing this. This window only reads, editing is planned.";
