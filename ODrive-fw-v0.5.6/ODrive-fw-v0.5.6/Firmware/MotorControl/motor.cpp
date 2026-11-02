@@ -213,17 +213,19 @@ extern "C" bool odrive_bridge_flash_arm_allowed(void);  // [pkgS] src/odrive_bri
 bool Motor::arm(PhaseControlLaw<3>* control_law) {
     g_arm_call_cnt++;
     odrive_drv_trace(0xF0);
-    // [pkgS] No arming during a flash operation, the callers see is_armed_ stay false and end in
-    // idle. Asked here so the brake stays closed, and again below, where it can't race with
-    // odrive_bridge_flash_begin().
-    if (!odrive_bridge_flash_arm_allowed()) {
+    // [pkgS] No arming during a flash operation. A caller must treat false as "nothing started" and
+    // keep its calibration values. Asked here so the brake stays closed, and again below, where it
+    // can't race with odrive_bridge_flash_begin().
+    arm_refused_ = !odrive_bridge_flash_arm_allowed();
+    if (arm_refused_) {
         return false;
     }
     axis_->mechanical_brake_.release();
     odrive_drv_trace(0xF1);
 
     CRITICAL_SECTION() {
-        if (!odrive_bridge_flash_arm_allowed()) {  // [pkgS]
+        arm_refused_ = !odrive_bridge_flash_arm_allowed();  // [pkgS]
+        if (arm_refused_) {
             return false;
         }
         control_law_ = control_law;
@@ -475,7 +477,10 @@ bool Motor::measure_phase_resistance(float test_current, float max_voltage) {
     control_law.target_current_ = test_current;
     control_law.max_voltage_ = max_voltage;
 
-    arm(&control_law);
+    // [pkgS] Refused during a flash operation: nothing was measured, the config keeps its value.
+    if (!arm(&control_law)) {
+        return false;
+    }
 
     for (size_t i = 0; i < 3000; ++i) {
         if (!((axis_->requested_state_ == Axis::AXIS_STATE_UNDEFINED) && axis_->motor_.is_armed_)) {
@@ -519,7 +524,10 @@ bool Motor::measure_phase_inductance(float test_voltage) {
     InductanceMeasurementControlLaw control_law;
     control_law.test_voltage_ = test_voltage;
 
-    arm(&control_law);
+    // [pkgS] Refused during a flash operation: nothing was measured, the config keeps its value.
+    if (!arm(&control_law)) {
+        return false;
+    }
 
     for (size_t i = 0; i < 1250; ++i) {
         if (!((axis_->requested_state_ == Axis::AXIS_STATE_UNDEFINED) && axis_->motor_.is_armed_)) {
