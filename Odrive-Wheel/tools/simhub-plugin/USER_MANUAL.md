@@ -355,10 +355,16 @@ can also say:
 | `unexpected reply (…)` | The answer is not a value of the expected type. |
 | `… (may be cut off)` | See below. |
 
-An ODrive read returns **at most 9 characters**, and the firmware cuts longer
-numbers without saying so. A number that fills all 9 may therefore be wrong: it
-is marked, and error bits are not decoded in that case. With a decimal point in
-the reply only decimals are lost, so `100.00000` means 100.
+Older firmware returns **at most 9 characters** from an ODrive read and cuts
+longer numbers without saying so. A number that fills all 9 may therefore be
+wrong. Newer firmware sends the whole value, but the plugin cannot tell yet which
+one it talks to: a number with 9 or more characters is always marked, and error
+bits are not decoded in that case. With a decimal point in the reply only decimals
+can be lost, so `100.00000` means 100.
+
+Newer firmware also writes floats with up to nine significant digits, so `25`,
+`0.100000001` or `1.17549435e-38` instead of `25.000000`, `0.100000` or `0.000000`.
+The units and the meaning of the values are the same.
 
 ---
 
