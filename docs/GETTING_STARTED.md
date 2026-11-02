@@ -1,9 +1,16 @@
 # Getting Started — Odrive-Wheel
 
+> **This fork:** the SimHub plugin is the user interface. Its full editor, setup
+> wizard and DFU flasher are planned ([Package 1, steps 1b–1e](packages/PKG1.md))
+> and not available yet. GitHub Pages is not part of this project: where this guide
+> says "config tool", it means the local reference copy
+> `Odrive-Wheel/tools/odrive-wheel.html`, which is no longer developed. Its
+> **Fetch latest from GitHub** button loads the original firmware, not this fork's.
+
 There are three ways to get the firmware onto an MKS XDrive Mini board:
 
 - **Route A — `dfu-util` (CLI)** — download the prebuilt `.bin` and flash it from the command line. Required for the **first flash**, or if something ever goes wrong.
-- **Route A2 — Web Flasher (browser)** — once the Odrive-Wheel firmware is already on the board, you can update it from the HTML config tool itself, no `dfu-util` needed. The easier option for day-to-day use.
+- **Route A2 — Web Flasher (browser)** — once the Odrive-Wheel firmware is already on the board, you can update it from the local copy of the HTML config tool, no `dfu-util` needed. To be replaced by the DFU flasher in the plugin.
 - **Route B — Compile from source (VS Code)** — clone the repo, build, and flash. For when you want to modify the code.
 
 After the firmware is flashed, the **"First-time motor bring-up"** section is **mandatory** — do not skip it, even on Route A. An ODrive without calibration or with the wrong `brake_resistance` can damage the PSU or the brake resistor.
@@ -80,9 +87,7 @@ The `tools/odrive-wheel.html` tool has a **"DFU Flash"** tab that does everythin
 
 ### Step by step
 
-1. Open the config tool — easiest is the hosted version at
-   **<https://eagabriel.github.io/Odrive-Wheel/>** (no install). Or open
-   `Odrive-Wheel/tools/odrive-wheel.html` locally if you prefer. Do noto use the connect buttom in the top in this step.
+1. Open your local copy of `Odrive-Wheel/tools/odrive-wheel.html`. Do noto use the connect buttom in the top in this step.
 2. Go to the **DFU Flash** tab in the sidebar (under "Tools").
 3. **Step 1 — Reboot to DFU**: click the button. The board reboots straight into the STM32 bootloader. Wait ~2 s.
 4. **Step 2 — Find bootloader**: click "Find bootloader". The browser opens a dialog asking for permission to access `STM32 BOOTLOADER` — approve it. The badge turns green with `✓`
@@ -189,7 +194,7 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D build/odrive-wheel.bin
 
 ### 1. Connect the configuration tool
 
-1. Open the config tool: <https://eagabriel.github.io/Odrive-Wheel/> in **Chrome or Edge** (Web Serial only works there). Local copy at `Odrive-Wheel/tools/odrive-wheel.html` works equivalently.
+1. Open your local copy of `Odrive-Wheel/tools/odrive-wheel.html` in **Chrome or Edge** (Web Serial only works there).
 2. Click **Connect** and pick the board's serial port (`Odrive-Wheel CDC` or similar).
 3. The status pill should turn green ("Connected").
 4. On the first time you flash use the erase config buttom. It will clear any trash that you can have in memory.
@@ -294,7 +299,7 @@ Save → reboot.
 
 ### 9. Validate FFB
 
-1. Use the FFB Force Test tab on https://eagabriel.github.io/Odrive-Wheel/ to exercise each effect and adjust currents and voltages.
+1. Use the FFB Force Test tab of your local copy of `Odrive-Wheel/tools/odrive-wheel.html` to exercise each effect and adjust currents and voltages.
 2. In Windows, `joy.cpl` → "Odrive-Wheel" → **Test Forces** tab if available, many windows version don't have it
 
 If you feel torque proportional to the input → FFB is working. Raise `maxtorque` slowly (2 → 4 → 6 Nm) adjust the currents imits if needed.

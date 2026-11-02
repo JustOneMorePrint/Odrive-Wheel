@@ -6,7 +6,8 @@ Hardware-Tests nur vom Nutzer.
 
 ## Vor jedem Flashen
 
-1. **ODrive-Konfiguration sichern** (Export als JSON im Web-Client bzw. später im Plugin).
+1. **ODrive-Konfiguration sichern** (Export als JSON. Im Plugin geplant, Teilschritt 1b; bis dahin
+   nur über die lokale Datei `Odrive-Wheel/tools/odrive-wheel.html`).
 2. **FFB-Einstellungen und Profile sichern** (Profil-Export).
 3. **Aktuelle Firmware-Datei aufheben** (`odrive-wheel.bin` des zuletzt funktionierenden
    Stands, inklusive Baseline aus Schritt 0).
@@ -15,11 +16,14 @@ Hardware-Tests nur vom Nutzer.
 
 - Läuft SimHub mit dem Plugin, zuerst dort **Release port** drücken. Das Plugin hält den
   seriellen Port, solange es läuft.
-- Bevorzugt: Web-Client → Tab „DFU Flash“ → **Datei auswählen** mit der `.bin` aus dem
-  PR-Build. Nicht „Fetch latest from GitHub“ verwenden, das lädt die Original-Firmware.
-- Alternative: `dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D odrive-wheel.bin`.
+- Der DFU-Flasher im Plugin ist geplant (Teilschritt 1e) und noch nicht vorhanden.
+- Bis dahin: `dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D odrive-wheel.bin`.
   Achtung: Die `.bin` deckt auch den Bereich des FFB-Speichers ab; beim Flashen per
   `dfu-util` können die FFB-Einstellungen verloren gehen. Deshalb vorher sichern.
+- Übergangsweise bleibt die lokale Datei `Odrive-Wheel/tools/odrive-wheel.html` → Tab
+  „DFU Flash“ → **Datei auswählen** mit der `.bin` aus dem PR-Build. Nicht „Fetch latest
+  from GitHub“ verwenden, das lädt die Original-Firmware. Eine gehostete Fassung über
+  GitHub Pages gehört nicht zum Projektbetrieb.
 - Die `.bin` gibt es als Artifact im CI-Lauf des PRs oder aus dem lokalen Build.
 - Nach dem Flashen mit `sys.build?` prüfen, dass der richtige Stand läuft.
 

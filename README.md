@@ -5,14 +5,16 @@ Custom firmware for ODrive v0.5.6 running on **MKS XDrive Mini** and
 full **HID Force Feedback** support to use the motor as a sim racing wheel.
 
 <p align="center">
-  <a href="https://eagabriel.github.io/Odrive-Wheel/"><b>🛠 Open the configuration tool →</b></a><br>
-  <sub>Runs in Chrome/Edge — no install. Connects via Web Serial / WebHID.</sub>
-</p>
-
-<p align="center">
-  <a href="Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md"><b>🎮 SimHub plugin — live telemetry, profile sync, mappable actions →</b></a><br>
+  <a href="Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md"><b>🎮 SimHub plugin — the user interface of this fork →</b></a><br>
   <sub>Reads the 1 kHz HID stream, syncs profile config via serial, adds 21 wheel-mappable actions. <a href="Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md">User manual</a>.</sub>
 </p>
+
+> **How this fork is operated:** configuration happens in the SimHub plugin.
+> The full ODrive editor, the FFB tabs, the setup wizard and the DFU flasher
+> are planned there and not available yet
+> ([Package 1, steps 1b–1e](docs/packages/PKG1.md)). The HTML tool
+> `Odrive-Wheel/tools/odrive-wheel.html` stays in the repo as a reference and is
+> no longer developed. GitHub Pages is not part of this project.
 
 <p align="center">
   <img src="docs/screenshots/MKSXdriveMini.png" alt="MKS XDrive Mini board" width="420">
@@ -89,22 +91,11 @@ Community contributions:
 
 ## 🚀 Quick start
 
-**Fastest path — in-browser Quick Start wizard.**
-
-Open **<https://eagabriel.github.io/Odrive-Wheel/>** in Chrome/Edge,
-connect the board via Web Serial, and follow the **Quick Start** tab —
-a 13-step guided wizard that walks you from blank firmware all the way
-to FFB responding in-game:
-
-1. Flash firmware (DFU) → 2. Connect → 3. Erase old config → 4. Power &
-protections (with **⚡ Set voltage** button — reads real `vbus_voltage`
-and auto-configures over/undervoltage trips + regen ramp) → 5. Motor
-config → 6. Encoder config → 7. Motor calibration → 8. Encoder offset →
-9. Mark pre-calibrated & Save → 10. Configure Z (index pulse) → 11. FFB
-config → 12. Test Spring → 13. Done.
-
-Each step shows suggested values, links to the relevant config tab, and
-decodes errors inline. UI is PT/EN.
+Install the [SimHub plugin](Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md).
+A guided setup in the plugin, from blank firmware to FFB responding in-game,
+is planned as [Package 1d](docs/packages/PKG1.md) and not available yet.
+Until then, [Getting started](docs/GETTING_STARTED.md) describes the first
+bring-up; it still refers to the local reference copy of the HTML tool.
 
 ## 📚 Guides
 
@@ -149,9 +140,8 @@ decodes errors inline. UI is PT/EN.
   live FFT panels, plus P_brake, P_motor and Clip OUT% indicators.
 - **Performance Test suite** — J via median `Iq·τ/α`, coastdown for
   `b`/`τ`, frequency sweep with real Bode overlay on the filter chart.
-- **In-browser DFU flasher** (WebUSB + DfuSe) with 📡 Fetch latest
-  from GitHub — no `dfu-util` needed after the first flash. FFB
-  settings survive the reflash (isolated flash sectors).
+- **DFU flasher in the SimHub plugin** — planned
+  ([Package 1e](docs/packages/PKG1.md)), not available yet.
 - **SimHub plugin** — [Odrive-Wheel Telemetry](Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md):
   reads all 1 kHz HID fields (position, velocity, Iq, torque, VBus,
   IBus, brake current, FET/motor temps, ODrive errors) as SimHub
@@ -160,23 +150,24 @@ decodes errors inline. UI is PT/EN.
   exposes 21 wheel-mappable actions (fine/coarse inc-dec of FX master,
   FX ratio, 3-band EQ + one-shot Zero-wheel-position).
 
-Full feature inventory and per-tab details live in the config tool
-itself — every field has a hover tooltip.
+The overlay, the Performance Test suite and the other analysis tools exist
+only in the reference HTML tool so far; moving them to the SimHub plugin is
+planned ([Package 2](docs/ROADMAP.md)). The per-tab details and tooltips also
+live there.
 
 ## Flash the firmware
 
-**Recommended path:** open the [HTML config tool](https://eagabriel.github.io/Odrive-Wheel/),
-go to the **DFU Flash** tab, click **📡 Fetch latest from GitHub**, follow
-the four buttons. Zero downloads on your side.
+A DFU flasher in the SimHub plugin is planned
+([Package 1e](docs/packages/PKG1.md)) and not available yet. Until then, flash
+with `dfu-util`; back up your FFB settings first, because the `.bin` also
+covers their flash sectors.
 
 **First flash from a blank board:** hold **BOOT0** and press **RESET** (or
 power-cycle with BOOT0 held) to enter DFU mode via the built-in bootloader
-— no extra tooling needed to get the board discovered. From there the
-in-browser flasher (WebUSB) handles the rest on Chrome/Edge. If the browser
-does not see the DFU device — happens on some Windows setups because
+— no extra tooling needed to get the board discovered. On some Windows setups
 `0483:df11` needs the WinUSB driver — install it once with
-[Zadig](https://zadig.akeo.ie/), or fall back to `dfu-util`. Full
-walkthrough in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+[Zadig](https://zadig.akeo.ie/). Full walkthrough in
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ## Build from source
 

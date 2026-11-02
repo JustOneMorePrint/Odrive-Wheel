@@ -186,7 +186,5 @@ Equivalent to:
 dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D build/odrive-wheel.bin
 ```
 
-For subsequent updates after the first flash, use the **DFU Flash** tab in
-the [HTML config tool](https://eagabriel.github.io/Odrive-Wheel/) instead —
-no `dfu-util` needed, and the tool has a 📡 Fetch latest from GitHub button
-that pulls the release binary directly.
+Use the same command for later updates. A DFU flasher in the SimHub plugin is
+planned ([Package 1e](packages/PKG1.md)) and not available yet.
