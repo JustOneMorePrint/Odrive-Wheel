@@ -349,6 +349,33 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        // A review holds on to one of these. It has to learn that it was replaced, also if the new one says the same.
+        public static void Test_every_new_state_replaces_the_one_before()
+        {
+            using (var rig = new Rig())
+            {
+                var detector = Started(rig);
+                WaitFor(detector, FirmwareCapabilityState.NotDeclared);
+                var first = detector.Status;
+                Check.True(!first.IsSuperseded && !first.Superseded.IsCancellationRequested, "it stands");
+                Check.True(detector.Status == first, "and stays the same object as long as nothing happens");
+
+                Check.True(detector.CheckAgain(), "asked again");
+                Check.True(first.IsSuperseded && first.Superseded.IsCancellationRequested, "gone with the request, not only with the answer");
+                var checking = detector.Status;
+                Check.Equal(FirmwareCapabilityState.Unknown, checking.State, "under way");
+
+                WaitFor(detector, FirmwareCapabilityState.NotDeclared);
+                Check.True(checking.IsSuperseded, "that one is gone too");
+                Check.True(detector.Status != first && !detector.Status.IsSuperseded, "a new one, which says the same");
+
+                var before = detector.Status;
+                Reconnect(rig);
+                Check.True(Wait.Until(() => before.IsSuperseded), "a new connection replaces it as well");
+                detector.Stop();
+            }
+        }
+
         // The new connection can be up before the event has reached the check, with the old answer still there.
         public static void Test_a_declaration_is_for_its_own_connection_only()
         {
@@ -767,12 +794,14 @@ namespace OdriveWheel.SimHubPlugin.Tests
             using (var rig = new PowerBrakeRig(prepare: b => { Board32(b); b.WholeReplies = true; }))
             {
                 var status = rig.Rig.Service.GetStatus();
-                var elsewhere = new FirmwareCapabilities(status.ConnectGeneration + 1, true, true);
+                var elsewhere = new FirmwareCapabilityStatus(status.ConnectGeneration + 1, FirmwareCapabilityState.Declared,
+                                                             new FirmwareCapabilities(status.ConnectGeneration + 1, true, true), null);
                 var inputs = new Dictionary<string, string> { [R.BrakeResistance] = "2.5" };
 
                 var review = OdrivePowerBrakeEditor.Review(PowerBrakeRig.Catalog, rig.Reader.Get, status, inputs, elsewhere);
                 Check.True(!review.CanApply, "ignored by the review");
                 Check.True(Unclear(review).Length == 2, string.Join(" ", review.Errors));
+                Check.True(review.Errors.Any(e => e.Contains("has not ended")), "and this connection has no state yet: " + string.Join(" ", review.Errors));
             }
         }
 
@@ -781,7 +810,8 @@ namespace OdriveWheel.SimHubPlugin.Tests
             using (var rig = new PowerBrakeRig(declared: true))
             {
                 var valid = rig.Review((R.BrakeResistance, "2.5"));
-                var elsewhere = new FirmwareCapabilities(valid.ConnectGeneration + 1, true, true);
+                var elsewhere = new FirmwareCapabilityStatus(valid.ConnectGeneration + 1, FirmwareCapabilityState.Declared,
+                                                             new FirmwareCapabilities(valid.ConnectGeneration + 1, true, true), null);
                 var handedOver = new PowerBrakeReview(new string[0], valid.Changes, new string[0], new string[0],
                                                       valid.ReviewedReplies, valid.Group, valid.ConnectGeneration, valid.LastStop, elsewhere);
                 var result = rig.Apply(handedOver);
@@ -797,7 +827,9 @@ namespace OdriveWheel.SimHubPlugin.Tests
             using (var rig = new PowerBrakeRig(declared: true))
             {
                 var status = rig.Rig.Service.GetStatus();
-                Check.True(rig.Review((R.BrakeResistance, "2.5")).Capabilities == rig.Detector.For(status), "the same object");
+                var review = rig.Review((R.BrakeResistance, "2.5"));
+                Check.True(review.Capabilities == rig.Detector.For(status), "the same object");
+                Check.True(review.CapabilityStatus == rig.Detector.Status, "and the state it comes from");
             }
         }
 
@@ -872,6 +904,217 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.True(result.AbortReason != null && result.AbortReason.Contains("changed since the review"), "reason: " + result.AbortReason);
                 Check.Equal(0, rig.Writes.Length, "no write");
             }
+        }
+
+        // All the way through the real serial path: such a reply opens nothing, here or later.
+        public static void Test_a_malformed_declaration_unlocks_nothing_from_review_to_readback()
+        {
+            foreach (var reply in new[] { "v v=1 ascii_full=1 float32_rt=1", "v=1 ascii_full ascii_full=1 float32_rt=1", "v=1 ascii_full=1 float32_rt float32_rt=1" })
+            {
+                using (var rig = new PowerBrakeRig(detect: true, prepare: b =>
+                {
+                    Board32(b);
+                    b.WholeReplies = true;
+                    b.SetValue("serial_number", "281474976710655");
+                    b.SetValue(FirmwareCapabilities.CommandPath, reply);
+                }))
+                {
+                    Check.Equal(FirmwareCapabilityState.NotDeclared, rig.Detector.Status.State, reply);
+                    Check.True(rig.Detector.Status.Detail.Contains("unusable reply"), rig.Detector.Status.Detail);
+                    Check.True(rig.Detector.For(rig.Rig.Service.GetStatus()) == null, "no declaration: " + reply);
+
+                    var serial = PowerBrakeRig.Catalog.Find("serial_number");
+                    Check.Equal(ParameterStatus.Ok, rig.Reader.RefreshAsync(new[] { serial }, CommandPriority.Batch, CancellationToken.None).Result.AbortReason == null ? ParameterStatus.Ok : ParameterStatus.Rejected, "read");
+                    Check.Equal("281474976710655 (may be cut off)", rig.Reader.Get(serial).Text, "the display stays in doubt");
+
+                    var review = rig.Review((R.BrakeResistance, "2.5"));
+                    Check.True(!review.CanApply, "the review stays in doubt");
+                    Check.True(Unclear(review).Any(e => e.Contains(R.OverVoltage)), string.Join(" ", review.Errors));
+                }
+            }
+        }
+    }
+
+    /// <summary>A review rests on the state of the firmware check it was made in, and on nothing later.</summary>
+    public static class FirmwareCapabilityBasisTests
+    {
+        private const string Restrictive = "v=1 ascii_full=1 float32_rt=0";
+
+        private static (string, string) Two => (R.BrakeResistance, "2.5");
+        private static (string, string) Three => (R.MaxRegen, "0.05");
+
+        private static void DeclareRestrictively(PowerBrakeRig rig)
+        {
+            rig.Board.SetValue(FirmwareCapabilities.CommandPath, Restrictive);
+            Check.True(rig.Detector.CheckAgain(), "asked again");
+            Check.True(Wait.Until(() => rig.Detector.Status.State == FirmwareCapabilityState.Declared), "the declaration is here");
+            Check.True(!rig.Detector.For(rig.Rig.Service.GetStatus()).FloatsAreExact, "and it rules out floats");
+        }
+
+        // The review before this rests on values that look exact, and on no declaration.
+        public static void Test_a_restrictive_declaration_before_the_apply_stops_it()
+        {
+            using (var rig = new PowerBrakeRig(detect: true))
+            {
+                var review = rig.Review(Two);
+                Check.True(review.CanApply, "clear by the careful rules: " + string.Join(" ", review.Errors));
+
+                DeclareRestrictively(rig);
+                var result = rig.Apply(review);
+
+                PowerBrakeApplyTests.CheckNothingWritten(rig, result, "firmware check");
+                Check.True(!result.AllVerified, "no success");
+                Check.Equal("2", rig.Board.Value(R.BrakeResistance), "unchanged");
+                Check.True(!rig.Review(Two).CanApply, "and a new review knows that floats are not exact");
+            }
+        }
+
+        public static void Test_a_restrictive_declaration_during_the_fresh_check_stops_it()
+        {
+            foreach (var (path, afterTheReply) in new[] { (R.BrakeResistance, false), (R.MaxRegen, true), ("vbus_voltage", false), ("vbus_voltage", true) })
+            {
+                PowerBrakeApplyTests.WriteHook hook = null;
+                using (var rig = new PowerBrakeRig(r => hook = new PowerBrakeApplyTests.WriteHook(r), detect: true))
+                {
+                    var review = rig.Review(Two, Three);
+                    Check.True(review.CanApply, string.Join(" ", review.Errors));
+
+                    bool done = false;
+                    Action<string> once = read =>
+                    {
+                        if (done || read != path) return;
+                        done = true;
+                        DeclareRestrictively(rig);
+                    };
+                    if (afterTheReply) hook.AfterRead = once;
+                    else hook.BeforeRead = once;
+
+                    var result = rig.Apply(review);
+
+                    Check.True(done, "it happened");
+                    PowerBrakeApplyTests.CheckNothingWritten(rig, result, "firmware check");
+                    Check.True(!result.AllVerified, "no success");
+                }
+            }
+        }
+
+        // No answer yet: the new check is under way, and what came before it counts for nothing.
+        public static void Test_a_new_check_ends_a_prepared_review_at_once()
+        {
+            using (var rig = new PowerBrakeRig(detect: true))
+            {
+                var review = rig.Review(Two);
+                Check.True(review.CanApply, string.Join(" ", review.Errors));
+
+                rig.Board.MuteOffbChannel = true;
+                Check.True(rig.Detector.CheckAgain(), "asked again");
+                Check.Equal(FirmwareCapabilityState.Unknown, rig.Detector.Status.State, "no answer yet");
+
+                PowerBrakeApplyTests.CheckNothingWritten(rig, rig.Apply(review), "firmware check");
+
+                var during = rig.Review(Two);
+                Check.True(!during.CanApply, "no new basis while the check runs either");
+                Check.True(during.Errors.Any(e => e.Contains("has not ended")), string.Join(" ", during.Errors));
+
+                // It ends without a declaration, so the careful way is open again, with a new review.
+                rig.Board.MuteOffbChannel = false;
+                Check.True(Wait.Until(() => rig.Detector.Status.State == FirmwareCapabilityState.NotDeclared), "no reply");
+                PowerBrakeApplyTests.CheckNothingWritten(rig, rig.Apply(review), "firmware check");
+
+                var after = rig.Review(Two);
+                Check.True(after.CanApply, string.Join(" ", after.Errors));
+                Check.True(rig.Apply(after).AllVerified, "the careful way works");
+            }
+        }
+
+        // After the last check of the applier and after the first one of the worker, right before the line.
+        public static void Test_a_new_check_at_the_last_moment_keeps_the_line_back()
+        {
+            PowerBrakeApplyTests.WriteHook hook = null;
+            using (var rig = new PowerBrakeRig(r => hook = new PowerBrakeApplyTests.WriteHook(r), detect: true))
+            {
+                hook.Before = path => rig.Board.OnNextDiscard(() => rig.Detector.CheckAgain());
+                var result = rig.Apply(rig.Review(Two, Three));
+
+                PowerBrakeApplyTests.CheckNothingWritten(rig, result, "firmware check");
+                Check.True(!OdriveStatusText.RamApply(result).Contains("Already transferred"), OdriveStatusText.RamApply(result));
+            }
+        }
+
+        public static void Test_a_new_check_just_before_the_write_keeps_the_line_back()
+        {
+            PowerBrakeApplyTests.WriteHook hook = null;
+            using (var rig = new PowerBrakeRig(r => hook = new PowerBrakeApplyTests.WriteHook(r), detect: true))
+            {
+                hook.Before = path => rig.Detector.CheckAgain();
+                PowerBrakeApplyTests.CheckNothingWritten(rig, rig.Apply(rig.Review(Two, Three)), "firmware check");
+            }
+        }
+
+        // Between two writes. What went out stays and is named, the rest stays back.
+        public static void Test_a_new_check_during_an_apply_ends_it_and_names_what_went_out()
+        {
+            var interferences = new (string Name, Action<PowerBrakeRig> Act)[]
+            {
+                ("a restrictive declaration", DeclareRestrictively),
+                ("a check that is still running", rig => Check.True(rig.Detector.CheckAgain(), "asked again")),
+            };
+            foreach (var (name, act) in interferences)
+            {
+                PowerBrakeApplyTests.WriteHook hook = null;
+                using (var rig = new PowerBrakeRig(r => hook = new PowerBrakeApplyTests.WriteHook(r), detect: true))
+                {
+                    bool done = false;
+                    hook.After = (path, sent) =>
+                    {
+                        if (done) return;
+                        done = true;
+                        act(rig);
+                    };
+                    var result = rig.Apply(rig.Review(Two, Three));
+
+                    Check.True(result.AbortReason != null && result.AbortReason.Contains("firmware check"), name + ", reason: " + result.AbortReason);
+                    Check.True(!result.AllVerified, name + ": no success");
+                    Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, name + ": sent, and not confirmed");
+                    Check.Equal(RamWriteOutcome.NotSent, result.Writes[1].Outcome, name + ": the next one");
+                    Check.Lines(new[] { "w " + R.BrakeResistance + " 2.5" }, rig.Writes, name + ": no further write, no retry, no rollback");
+                    Check.Equal("2.5", rig.Board.Value(R.BrakeResistance), name + ": it stays on the board");
+
+                    var text = OdriveStatusText.RamApply(result);
+                    Check.True(text.Contains("Already transferred, and still in place: " + R.BrakeResistance), text);
+                    Check.True(text.Contains(R.MaxRegen + " = 0.05 Amps: not sent"), text);
+                }
+            }
+        }
+
+        // The last field: the reply would confirm it, but no longer on the basis this was reviewed on.
+        public static void Test_a_change_around_the_readback_gives_no_success()
+        {
+            foreach (var afterTheReply in new[] { false, true })
+            {
+                PowerBrakeApplyTests.WriteHook hook = null;
+                using (var rig = new PowerBrakeRig(r => hook = new PowerBrakeApplyTests.WriteHook(r), detect: true))
+                {
+                    var review = rig.Review(Two);
+                    PowerBrakeApplyTests.AtReadback(hook, R.BrakeResistance, () => DeclareRestrictively(rig), afterTheReply);
+                    var result = rig.Apply(review);
+
+                    Check.Equal("2.5", rig.Board.Value(R.BrakeResistance), "a read would return the expected value");
+                    Check.Equal(RamWriteOutcome.NotVerified, result.Writes[0].Outcome, "not verified, after the reply: " + afterTheReply);
+                    Check.True(!result.AllVerified, "no success");
+                    Check.True(result.AbortReason != null && result.AbortReason.Contains("firmware check"), "reason: " + result.AbortReason);
+                    Check.True(OdriveStatusText.RamApply(result).Contains("Already transferred"), OdriveStatusText.RamApply(result));
+                }
+            }
+        }
+
+        // Nothing changed, so nothing stands in the way, with or without a declaration.
+        public static void Test_a_check_that_stays_as_it_was_leaves_the_apply_alone()
+        {
+            using (var rig = new PowerBrakeRig(detect: true))
+                Check.True(rig.Apply(rig.Review(Two, Three)).AllVerified, "the careful way");
+            using (var rig = new PowerBrakeRig(declared: true))
+                Check.True(rig.Apply(rig.Review(Two, Three)).AllVerified, "with a declaration");
         }
     }
 
@@ -986,6 +1229,110 @@ namespace OdriveWheel.SimHubPlugin.Tests
             board.SetValue(R.OverVoltage, "32.012");
             board.SetValue("serial_number", "281474976710655");
             board.SetValue("axis0.motor.error", "2147483648");
+        }
+
+        // Values that are clear by the careful rules, on a board that declares nothing so far.
+        private static void Careful(FakeBoard board)
+        {
+            PowerBrakeRig.PrepareBoard(board);
+            board.SetValue("vbus_voltage", "30");
+        }
+
+        private static string[] ConfigWrites(WindowTests.WindowRig rig)
+            => rig.Rig.Board.Lines.Where(l => l.StartsWith("w config.", StringComparison.Ordinal)).ToArray();
+
+        private static void PrepareReview(WindowTests.WindowRig rig, params string[] fields)
+        {
+            Check.True(Wait.Until(() => rig.On(w => w.CapabilityText.Text).Contains("nothing declared")), rig.On(w => w.CapabilityText.Text));
+            ReadPowerBrake(rig);
+            rig.Host.Invoke(w =>
+            {
+                foreach (var field in fields)
+                {
+                    w.TypePowerBrakeValue(field, field == R.MaxRegen ? "0.05" : "2.5");
+                    w.SelectPowerBrakeField(field, true);
+                }
+            });
+            Press(rig, w => w.ReviewButton);
+            Check.True(rig.On(w => w.ApplyButton.IsEnabled), "clear by the careful rules: " + rig.On(w => w.ReviewText.Text));
+        }
+
+        // All in one go on the thread of the window, so the status timer cannot run in between.
+        public static void Test_a_restrictive_declaration_stops_an_apply_before_the_timer_runs()
+        {
+            using (var rig = new WindowTests.WindowRig(Careful, detectCapabilities: true))
+            {
+                PrepareReview(rig, R.BrakeResistance);
+
+                rig.Host.Invoke(w =>
+                {
+                    rig.Rig.Board.SetValue(FirmwareCapabilities.CommandPath, "v=1 ascii_full=1 float32_rt=0");
+                    Check.True(rig.Capabilities.CheckAgain(), "asked again");
+                    Check.True(Wait.Until(() => rig.Capabilities.Status.State == FirmwareCapabilityState.Declared), "the declaration is here");
+                    Check.True(w.ApplyButton.IsEnabled, "the timer has not run");
+                    w.ApplyButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                });
+
+                Thread.Sleep(300);
+                Check.Equal(0, ConfigWrites(rig).Length, "no write");
+                Check.Equal("2", rig.Rig.Board.Value(R.BrakeResistance), "unchanged");
+                Check.True(!rig.On(w => w.ApplyButton.IsEnabled), "and the review is gone");
+                Check.True(rig.On(w => w.ReviewText.Text).Contains("review again"), rig.On(w => w.ReviewText.Text));
+            }
+        }
+
+        public static void Test_check_firmware_again_ends_a_prepared_review_at_once()
+        {
+            using (var rig = new WindowTests.WindowRig(Careful, detectCapabilities: true))
+            {
+                PrepareReview(rig, R.BrakeResistance);
+
+                // The answer stays away, and the review is gone before there is one.
+                rig.Rig.Board.MuteOffbChannel = true;
+                rig.Host.Invoke(w =>
+                {
+                    w.CheckCapabilitiesButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    Check.True(!w.ApplyButton.IsEnabled, "gone with the click");
+                    Check.True(w.ReviewText.Text.Contains("review again"), w.ReviewText.Text);
+                    w.ApplyButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    w.ReviewButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    Check.True(!w.ApplyButton.IsEnabled, "no new one while the check runs");
+                    Check.True(w.ReviewText.Text.Contains("has not ended"), w.ReviewText.Text);
+                });
+                Thread.Sleep(100);
+                Check.Equal(0, ConfigWrites(rig).Length, "no write");
+
+                // No declaration again: the careful way is there, with a new review.
+                rig.Rig.Board.MuteOffbChannel = false;
+                Check.True(Wait.Until(() => rig.On(w => w.CapabilityText.Text).Contains("nothing declared")), rig.On(w => w.CapabilityText.Text));
+                Press(rig, w => w.ReviewButton);
+                Check.True(rig.On(w => w.ApplyButton.IsEnabled), rig.On(w => w.ReviewText.Text));
+                Press(rig, w => w.ApplyButton);
+                Check.True(Wait.Until(() => rig.On(w => w.ApplyText.Text).Contains("verified by readback"), 5000), rig.On(w => w.ApplyText.Text));
+            }
+        }
+
+        public static void Test_check_firmware_again_during_an_apply_ends_it()
+        {
+            using (var rig = new WindowTests.WindowRig(Careful, detectCapabilities: true))
+            {
+                PrepareReview(rig, R.BrakeResistance, R.MaxRegen);
+
+                rig.Rig.Board.ReplyDelayMs = 20;
+                Press(rig, w => w.ApplyButton);
+                Check.True(rig.On(w => w.IsApplying), "applying");
+                Check.True(Wait.Until(() => ConfigWrites(rig).Length >= 1, 8000), "the first write went out");
+
+                Press(rig, w => w.CheckCapabilitiesButton);
+                Check.True(Wait.Until(() => !rig.On(w => w.IsApplying), 5000), "the apply should end");
+
+                var text = rig.On(w => w.ApplyText.Text);
+                Check.True(text.Contains("firmware check"), text);
+                Check.True(text.Contains("Already transferred"), text);
+                Check.True(text.Contains("not sent"), text);
+                Check.Equal(1, ConfigWrites(rig).Length, "no further write");
+                Check.Equal("0", rig.Rig.Board.Value(R.MaxRegen), "the second value stayed out");
+            }
         }
 
         public static void Test_the_window_says_what_is_declared_and_shows_complete_numbers()

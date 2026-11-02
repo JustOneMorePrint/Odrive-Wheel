@@ -294,7 +294,7 @@ namespace OdriveWheel.SimHubPlugin
             var selected = _powerBrakeFields.Where(f => f.Select.IsChecked == true)
                                             .ToDictionary(f => f.Parameter.Path, f => f.Input, StringComparer.Ordinal);
             var status = _serial.GetStatus();
-            _review = OdrivePowerBrakeEditor.Review(_catalog, _reader.Get, status, selected, _capabilities?.For(status));
+            _review = OdrivePowerBrakeEditor.Review(_catalog, _reader.Get, status, selected, _capabilities?.StatusFor(status));
             ReviewText.Text        = OdriveStatusText.RamReview(_review);
             ReviewText.Foreground  = _review.CanApply ? BrushNeutral : BrushWarn;
             ApplyButton.IsEnabled  = _review.CanApply;
@@ -313,17 +313,19 @@ namespace OdriveWheel.SimHubPlugin
         {
             if (_review == null || _applying) return;
             bool sameOperation = status.IsConnected && status.ConnectGeneration == _review.ConnectGeneration && status.LastStop == _review.LastStop;
-            bool sameDeclaration = _review.Capabilities == _capabilities?.For(status);
-            if (sameOperation && sameDeclaration) return;
+            bool sameCheck = _review.CapabilityStatus == null || !_review.CapabilityStatus.IsSuperseded;
+            if (sameOperation && sameCheck) return;
             DropReview();
             ReviewText.Text = sameOperation
-                ? "The firmware has declared what its replies guarantee, review again."
+                ? "The firmware check changed since this review, review again."
                 : "The connection or the stop state changed, review again.";
             ReviewText.Foreground = BrushWarn;
         }
 
         private async void ApplyPowerBrake()
         {
+            // The status timer may not have seen it yet.
+            DropReviewIfOutdated(_serial.GetStatus());
             var review = _review;
             if (review == null || !review.CanApply || _applying || _refreshing || _closed) return;
 

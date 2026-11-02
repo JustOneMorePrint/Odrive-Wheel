@@ -18,11 +18,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public FakeBoard Board => Rig.Board;
         public OdriveParameterReader Reader { get; }
         public OdriveRamApplier Applier { get; }
-        /// <summary>Null unless the rig stands for current firmware.</summary>
+        /// <summary>Null unless the rig runs the check.</summary>
         public OdriveCapabilityDetector Detector { get; }
 
         /// <param name="declared">The board declares its replies, and the rig has seen that before it reads.</param>
-        public PowerBrakeRig(Func<Rig, IOdriveParameters> parameters = null, bool declared = false, Action<FakeBoard> prepare = null)
+        /// <param name="detect">The rig runs the check on a board that declares nothing, and has seen that before it reads.</param>
+        public PowerBrakeRig(Func<Rig, IOdriveParameters> parameters = null, bool declared = false, Action<FakeBoard> prepare = null, bool detect = false)
         {
             Rig = new Rig(prepare: board =>
             {
@@ -30,11 +31,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 prepare?.Invoke(board);
                 if (declared) board.BecomeCurrentFirmware();
             });
-            if (declared)
+            if (declared || detect)
             {
                 Detector = new OdriveCapabilityDetector(Rig.Service, Rig.Parameters);
                 Detector.Start();
-                Check.True(Wait.Until(() => Detector.Status.State == FirmwareCapabilityState.Declared), "the firmware should be recognised");
+                var expected = declared ? FirmwareCapabilityState.Declared : FirmwareCapabilityState.NotDeclared;
+                Check.True(Wait.Until(() => Detector.Status.State == expected), "the check should end as " + expected + ", is " + Detector.Status.State);
             }
             Reader = new OdriveParameterReader(
                 (p, priority, cancellation) => Rig.Parameters.ReadAsync(p.Path, p.Protocol, priority, cancellation),
@@ -79,7 +81,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             var status = Rig.Service.GetStatus();
             return OdrivePowerBrakeEditor.Review(Catalog, Reader.Get, status,
                                                  inputs.ToDictionary(i => i.Path, i => i.Value, StringComparer.Ordinal),
-                                                 Detector?.For(status));
+                                                 Detector?.StatusFor(status));
         }
 
         public RamApplyResult Apply(PowerBrakeReview review)
@@ -542,7 +544,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private static (string, string) Two => (R.BrakeResistance, "2.5");
         private static (string, string) Three => (R.MaxRegen, "0.05");
 
-        private static void CheckNothingWritten(PowerBrakeRig rig, RamApplyResult result, string contains)
+        internal static void CheckNothingWritten(PowerBrakeRig rig, RamApplyResult result, string contains)
         {
             Check.True(result.AbortReason != null && result.AbortReason.Contains(contains), "reason: " + result.AbortReason);
             Check.Equal(0, rig.Writes.Length, "no write");

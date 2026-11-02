@@ -95,9 +95,15 @@ namespace OdriveWheel.SimHubPlugin
         NotDeclared,
     }
 
-    /// <summary>The state of the check for one connection, safe to read from any thread.</summary>
+    /// <summary>
+    /// One state of the check for one connection, safe to read from any thread. Each new state is a new object,
+    /// also if it says the same, and the old one knows it was replaced. Whatever rests on a state can hold on to
+    /// it, and ends with it through <see cref="Superseded"/>.
+    /// </summary>
     public sealed class FirmwareCapabilityStatus
     {
+        private readonly CancellationTokenSource _superseded = new CancellationTokenSource();
+
         internal FirmwareCapabilityStatus(int connectGeneration, FirmwareCapabilityState state, FirmwareCapabilities capabilities, string detail)
         {
             ConnectGeneration = connectGeneration;
@@ -112,6 +118,12 @@ namespace OdriveWheel.SimHubPlugin
         public FirmwareCapabilities Capabilities { get; }
         /// <summary>Why it is not declared, null otherwise.</summary>
         public string Detail { get; }
+
+        /// <summary>Cancelled when another state takes the place of this one.</summary>
+        public CancellationToken Superseded => _superseded.Token;
+        public bool IsSuperseded => _superseded.IsCancellationRequested;
+
+        internal void Supersede() => _superseded.Cancel();
     }
 
     /// <summary>
@@ -151,14 +163,13 @@ namespace OdriveWheel.SimHubPlugin
         public int Version => Volatile.Read(ref _version);
 
         /// <summary>The state for the connection that is up now.</summary>
-        public FirmwareCapabilityStatus Status
+        public FirmwareCapabilityStatus Status => StatusFor(_serial.GetStatus());
+
+        /// <summary>The state for the connection of this status, Unknown if the check knows nothing of it yet.</summary>
+        public FirmwareCapabilityStatus StatusFor(SerialStatus serial)
         {
-            get
-            {
-                var serial = _serial.GetStatus();
-                var status = Volatile.Read(ref _status);
-                return serial.IsConnected && status.ConnectGeneration == serial.ConnectGeneration ? status : NoConnection;
-            }
+            var status = Volatile.Read(ref _status);
+            return serial.IsConnected && status.ConnectGeneration == serial.ConnectGeneration ? status : NoConnection;
         }
 
         /// <summary>What was declared on that connection, null if nothing was. Never the declaration of another one.</summary>
@@ -295,8 +306,11 @@ namespace OdriveWheel.SimHubPlugin
 
         private void Publish(FirmwareCapabilityStatus status)
         {
+            var previous = _status;
             Volatile.Write(ref _status, status);
             Interlocked.Increment(ref _version);
+            // Last, so whoever this wakes finds the new state. The placeholder stands for no state at all.
+            if (previous != NoConnection) previous.Supersede();
         }
     }
 }

@@ -61,7 +61,8 @@ namespace OdriveWheel.SimHubPlugin
     /// are no hardware safeguard. A failure is reported and never repaired: no retry, no writing back.
     ///
     /// Every command is bound to the connection and the stop state of the review, so the serial worker holds
-    /// it back if either changed, however late. The checks here say why, and judge what comes back.
+    /// it back if either changed, however late. The same goes for the state of the firmware check the review
+    /// rests on, through its token. The checks here say why, and judge what comes back.
     /// </summary>
     public sealed class OdriveRamApplier
     {
@@ -90,15 +91,23 @@ namespace OdriveWheel.SimHubPlugin
                 return new RamApplyResult(writes, "the review found problems");
             if (review.Changes.Any(c => !c.Parameter.Editable))
                 return new RamApplyResult(writes, "the changes contain a parameter that cannot be edited");
-            if (review.Capabilities != null && review.Capabilities.ConnectGeneration != review.ConnectGeneration)
+            if (review.CapabilityStatus != null && review.CapabilityStatus.ConnectGeneration != review.ConnectGeneration)
                 return new RamApplyResult(writes, "the firmware declaration belongs to another connection");
 
+            var superseded = review.CapabilityStatus?.Superseded ?? CancellationToken.None;
+            using (var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellation, superseded))
+                return await RunAsync(review, writes, operation.Token).ConfigureAwait(false);
+        }
+
+        private async Task<RamApplyResult> RunAsync(PowerBrakeReview review, List<RamWriteResult> writes, CancellationToken cancellation)
+        {
             var blocked = WhyBlocked(review, cancellation);
             if (blocked != null) return new RamApplyResult(writes, blocked);
 
             var context = new SerialOperationContext(review.ConnectGeneration, review.LastStop);
             var (order, refusal) = await CheckFreshValues(review, context, cancellation).ConfigureAwait(false);
-            if (refusal != null) return new RamApplyResult(writes, refusal);
+            // If something stopped the reads, that is the reason, not the read that failed.
+            if (refusal != null) return new RamApplyResult(writes, WhyBlocked(review, cancellation) ?? refusal);
 
             var byChange = writes.ToDictionary(w => w.Change);
             foreach (var change in order)
@@ -107,7 +116,7 @@ namespace OdriveWheel.SimHubPlugin
 
                 var why = WhyBlocked(review, cancellation) ?? await WhyNotIdle(context, cancellation).ConfigureAwait(false);
                 // The checks take time, so ask once more right before the line goes out.
-                why = why ?? WhyBlocked(review, cancellation);
+                why = WhyBlocked(review, cancellation) ?? why;
                 if (why != null) return new RamApplyResult(writes, why);
 
                 var abort = await WriteOne(write, review, context, cancellation).ConfigureAwait(false);
@@ -118,15 +127,17 @@ namespace OdriveWheel.SimHubPlugin
             return new RamApplyResult(writes, null);
         }
 
-        // What stops every further write: a stop, a new connection, a released port, a closing window.
+        // What stops every further write: a stop, a new connection, a released port, a new state of the firmware
+        // check, a closing window. In this order, because the token of the operation ends with the last two.
         private string WhyBlocked(PowerBrakeReview review, CancellationToken cancellation)
         {
-            if (cancellation.IsCancellationRequested) return "cancelled";
             var status = _getStatus();
             if (status.LastStop != review.LastStop || status.StopLatched)
                 return "software stop";
             if (!status.IsConnected) return OdriveStatusText.Connection(status).Text;
             if (status.ConnectGeneration != review.ConnectGeneration) return "the connection changed, the board may have rebooted";
+            if (review.CapabilityStatus != null && review.CapabilityStatus.IsSuperseded) return "the firmware check changed since the review";
+            if (cancellation.IsCancellationRequested) return "cancelled";
             return null;
         }
 

@@ -158,7 +158,7 @@ namespace OdriveWheel.SimHubPlugin
         internal PowerBrakeReview(IReadOnlyList<string> errors, IReadOnlyList<PowerBrakeChange> changes, IReadOnlyList<string> unchanged,
                                   IReadOnlyList<string> notes, IReadOnlyDictionary<string, string> reviewedReplies,
                                   IReadOnlyList<ParameterDefinition> group, int connectGeneration, StopTicket lastStop,
-                                  FirmwareCapabilities capabilities = null)
+                                  FirmwareCapabilityStatus capabilityStatus = null)
         {
             Errors = errors;
             Changes = changes;
@@ -168,7 +168,7 @@ namespace OdriveWheel.SimHubPlugin
             Group = group;
             ConnectGeneration = connectGeneration;
             LastStop = lastStop;
-            Capabilities = capabilities;
+            CapabilityStatus = capabilityStatus;
         }
 
         public IReadOnlyList<string> Errors { get; }
@@ -183,8 +183,11 @@ namespace OdriveWheel.SimHubPlugin
         internal IReadOnlyList<ParameterDefinition> Group { get; }
         internal int ConnectGeneration { get; }
         internal StopTicket LastStop { get; }
-        /// <summary>The declaration this review rests on, for all that follows from it. Null if there was none.</summary>
-        internal FirmwareCapabilities Capabilities { get; }
+        /// <summary>The state of the firmware check this review rests on. If it is replaced, this review counts for
+        /// nothing any more, whatever the new state says. Null where no check is in use.</summary>
+        internal FirmwareCapabilityStatus CapabilityStatus { get; }
+        /// <summary>The declaration in that state, for all that follows from it. Null if there was none.</summary>
+        internal FirmwareCapabilities Capabilities => CapabilityStatus?.Capabilities;
     }
 
     public static class OdrivePowerBrakeEditor
@@ -198,13 +201,16 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>
         /// Checks the selected inputs against what was last read. All values of the group must have been read
         /// on this connection and be clear, because the relations between them cannot be judged otherwise.
-        /// A declaration of the firmware counts only for the connection it was made on. Sends nothing.
+        /// A declaration of the firmware counts only for the connection it was made on. While the check of this
+        /// connection runs there is no review: what it finds decides what counts as exact. Sends nothing.
         /// </summary>
         public static PowerBrakeReview Review(OdriveParameterCatalog catalog, Func<ParameterDefinition, ParameterReading> reading,
                                               SerialStatus status, IReadOnlyDictionary<string, string> selectedInputs,
-                                              FirmwareCapabilities capabilities = null)
+                                              FirmwareCapabilityStatus capabilityStatus = null)
         {
-            if (capabilities != null && !capabilities.BelongsTo(status)) capabilities = null;
+            bool checkHasEnded = capabilityStatus == null
+                || (capabilityStatus.State != FirmwareCapabilityState.Unknown && capabilityStatus.ConnectGeneration == status.ConnectGeneration);
+            var capabilities = checkHasEnded && capabilityStatus?.Capabilities?.BelongsTo(status) == true ? capabilityStatus.Capabilities : null;
 
             var group = EditableParameters(catalog);
             var errors = new List<string>();
@@ -213,6 +219,7 @@ namespace OdriveWheel.SimHubPlugin
             var replies = new Dictionary<string, string>(StringComparer.Ordinal);
             var current = new Dictionary<string, double>(StringComparer.Ordinal);
 
+            if (!checkHasEnded) errors.Add("The firmware check has not ended on this connection, review again when it has.");
             if (status.StopLatched) errors.Add("The software stop is set, press Clear stop first.");
             if (selectedInputs.Count == 0) errors.Add("Select at least one field.");
             foreach (var path in selectedInputs.Keys)
@@ -270,7 +277,7 @@ namespace OdriveWheel.SimHubPlugin
                 if (errors.Count == 0) notes.AddRange(OdrivePowerBrakeRules.Notes(final, changes.Select(c => c.Parameter.Path)));
             }
 
-            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop, capabilities);
+            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop, capabilityStatus);
         }
     }
 }
