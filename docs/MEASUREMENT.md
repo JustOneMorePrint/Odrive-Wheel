@@ -32,7 +32,12 @@ bandwidth is a parameter of its own.
 | M4 | Filter delay | Per filter and for the whole chain | Calculated, then a sine through the real code on the host, then on the board | Host test first |
 | M5 | Runtime and jitter | Control loop, sampling, FFB thread | `task_times` and `TaskTimer` for the control loop, period statistics for the thread | Control loop exists, thread to add |
 | M6 | Missed deadlines | Control loop, FFB tick, encoder read | `CONTROL_DEADLINE_MISSED`, `TIMER_UPDATE_MISSED`, `BAD_TIMING` exist and disarm, counters for ticks and skipped reads to add | Partly exists |
-| M7 | End to end | Game force command to measured torque | Test report on the PC, `Iq_measured` in the HID stream, a scope on a GPIO for what the host cannot see | Plugin, package 2 |
+| M7 | End to end, to the current | Game force command to `Iq_measured` | Test report on the PC, `Iq_measured` in the HID stream at 1 kHz, a scope on a GPIO for what the host cannot see | Plugin, package 2 |
+| M8 | Measured torque, optional | Force at the wheel or shaft | A torque sensor, or a lever and a scale, run by the user | None required |
+
+**Current is not torque.** M3 and M7 measure current. With a known Kt, `Iq_measured` × Kt estimates the motor's torque, and that estimate leaves out
+friction, cogging and saturation. A statement about real torque needs M8, and is named as a measurement of torque only then. No goal
+here requires an additional sensor.
 
 **Standard load:** all axis effects on, a constant and a periodic game effect, HID at full rate, serial status polling, motor
 in closed loop at low force. Every number states the load, the board, the encoder and `sys.build?`.
@@ -57,7 +62,7 @@ Every goal is checked by the metric named. Numbers come after the baseline, a nu
 | A function in the 8 kHz path costs what it says | M5 before and after, in the PR (rule 8 in `CLAUDE.md`) |
 | The FFB tick stays on time | M5, M6: worst period and missed ticks |
 | A filter change reduces delay without new noise | M4 and the noise in `Iq_measured` at rest |
-| A change that claims to feel better shows it | M1 to M7 as named in its PR, plus the user's verdict, marked as such |
+| A change that claims to feel better shows it | The metrics named in its PR, plus the user's verdict, marked as such |
 
 A change that does not show its benefit is not merged as an improvement. It may stay as a variant behind a switch if the user
 wants to compare, or it is dropped.

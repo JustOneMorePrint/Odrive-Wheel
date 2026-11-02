@@ -43,8 +43,19 @@ is right follows from this comparison.
 
 ## Power supply and brake resistor
 
-**Nominal voltage 24–48 V.** The build trips at 59.92 V (`HW_VERSION_VOLTAGE=56`). That is a limit of the board, not a
-recommendation. The input range in the plugin follows in the setup stage, today it only asks for a positive value.
+**Nominal voltage 24–48 V.** The range this project plans for. The input range in the plugin follows in the setup stage, today
+it only asks for a positive value.
+
+**Voltage limits in the firmware**, as `odrive_main.h` has them. All are configurable:
+
+| Value | Default | What it does |
+|---|---|---|
+| `dc_bus_overvoltage_trip_level` | 30 V | Above it the firmware stops with `DC_BUS_OVER_VOLTAGE` (`do_fast_checks`) |
+| `dc_bus_undervoltage_trip_level` | 4 V | Below it the firmware stops with `DC_BUS_UNDER_VOLTAGE` |
+| `dc_bus_overvoltage_ramp_start`, `_end` | 59.92 V, from `1.07 × HW_VERSION_VOLTAGE` | Only the overvoltage ramp, which is off by default |
+
+So a board with the default configuration on a supply above 30 V reports the error until setup has set the trip level. These are
+settings. **No electrical rating of a board follows from any of them**, that takes the maker's data.
 
 **Power supply data** stays as it is: DC Output Voltage, Continuous Output Current, Current Headroom, Short-time overload
 supported, Short-Time Current, Maximum Duration in ms. Details in `docs/packages/PKG1.md`.
@@ -75,7 +86,7 @@ moves to the plugin in step 1d. The plugin's catalog already lists these values,
 | Hardware | On the board | External, on a GPIO in `ANALOG_IN` |
 | Firmware | `fet_thermistors[]`, fixed polynomial (`board_v3.cpp`) | `motor_thermistors[]`, polynomial from the config |
 | Config | `enabled`, `temp_limit_lower`, `temp_limit_upper` | The same, plus `gpio_pin`, `poly_coefficient_0..3` |
-| Effect | Current limit falls linearly from lower to upper, an error at upper | The same, `MOTOR_THERMISTOR_OVER_TEMP` |
+| Effect | Current limit falls linearly from lower and is zero at upper. The error `FET_THERMISTOR_OVER_TEMP` follows at upper + 5 °C (`thermistor.cpp`) | The same, `MOTOR_THERMISTOR_OVER_TEMP` |
 | Reported | `sys.temp?`, HID `FetTempC` | `sys.motortemp?`, HID `MotorTempC` |
 | Setup | – | NTC calculator: β, R at 25 °C, pull-up, reference voltage, range to a third-order fit, with a wiring note |
 
@@ -84,15 +95,18 @@ To carry over knowingly:
 - The pull-up is **external**: the STM32 has none in analog mode, and 5 V needs a higher value to stay within the ADC.
 - Without a pull-up the reading looks like a valid temperature. The firmware cannot tell a missing sensor, so setup has to ask
   for a plausibility check at a known temperature.
-- `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, the HID report uses `-128`. The plugin must not show `0.0` as a reading.
+- `0.0` from `sys.temp?` or `sys.motortemp?` is ambiguous: these commands answer it for NaN, and a real 0 °C looks the same. It shows
+  neither a valid reading nor a missing sensor. Setup and diagnosis treat it as unclear, and use the plausibility check above.
+- The HID report uses `-128` for a value that is not finite. That is not a sensor check either: the firmware's filter goes back to 0 after a NaN
+  (`ThermistorCurrentLimiter::update`), and a pin without an ADC channel evaluates the polynomial at -1, which gives a number.
 - The KTY84 preset of step 1d adds a positive coefficient sensor to the same polynomial. Threshold PTCs cannot be mapped.
-- Limits are the user's from the motor's data. The web client's hints name 100 and 120 °C, the plugin offers no defaults as if they
-  were this motor's values.
+- Limits are the user's from the motor's data. The firmware's defaults are 100 and 120 °C, with the FET sensor on and the motor sensor off. Setup does
+  not present them as this motor's values.
 
 ## Calibration: what exists and what to take over
 
 **Odrive-Wheel** ("Quick Start" in `Odrive-Wheel/tools/odrive-wheel.html`, `docs/GETTING_STARTED.md`): 13 steps. Flash,
-connect, erase, enter power values, enter motor values, enter encoder values, measure R and L (state 4, no rotation),
+connect, erase, enter power values, enter motor values, enter encoder values, measure R and L (state 4, see below),
 find the encoder offset (state 7, about one turn, wheel free), mark as calibrated and save, optional index search with Z
 (about 30 s of rotation), enter range and torque, test with a spring. Stored values are used on later starts. Separately: anticogging
 (3–10 min, motor free), performance test and coastdown (J, b, breakaway), encoder diagnostics, capture of the mechanical center.
@@ -116,7 +130,7 @@ page](https://ffbeast.github.io/docs/en/hardware_motor.html) estimates torque fr
 
 | Quantity | Source | State |
 |---|---|---|
-| Phase resistance, inductance | **Measured**, state 4. Needs `calibration_current` and `resistance_calib_max_voltage`, chosen from the motor's data | Exists |
+| Phase resistance, inductance | **Measured**, state 4. Needs `calibration_current` and `resistance_calib_max_voltage`, chosen from the motor's data. No rotation is intended, but the motor is energized and can align or move, whatever the web client's "does NOT spin" suggests | Exists |
 | Current controller gains | **Derived** from R, L and the chosen bandwidth | Exists |
 | Encoder offset, direction | **Measured**, state 7, wheel free | Exists |
 | Index position | **Measured**, state 6, only with Z | Exists |
