@@ -601,7 +601,8 @@ void AsciiProtocol::cmd_read_property(char * pStr, bool use_checksum) {
         if (!type_info) {
             respond(use_checksum, "invalid property");
         } else {
-            char response[10];
+            // Odrive-Wheel patch: was 10 bytes. respond() has room for this plus "*255\r\n".
+            char response[TO_STRING_BUFFER_SIZE];
             bool success = type_info->get_string(property, response, sizeof(response));
             respond(use_checksum, success ? response : "not implemented");
         }
