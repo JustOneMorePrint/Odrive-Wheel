@@ -3,6 +3,7 @@
 // colisão entre nomes "Axis" (ODrive) e "Axis" (OpenFFBoard FFB stack).
 
 #include "odrive_bridge.h"
+#include "flash_guard.h"  // [pkgS]
 #include "odrive_main.h"
 #include <cmsis_os.h>
 
@@ -229,4 +230,55 @@ extern "C" void odrive_bridge_mt6835_get_status(struct mt6835_snap_t *snap) {
     // 0=sem cal, 1=rodando, 2=falhou, 3=sucesso. -1 = leitura SPI falhou.
     uint8_t cal_reg = 0;
     snap->cal_state = e.mt6835_read_reg(0x113, &cal_reg) ? ((cal_reg >> 6) & 0x3) : -1;
+}
+
+// ===================== [pkgS] Flash guard ====================================
+// The axis state behind the decision in flash_guard.c, for all axes. UNDEFINED is the state before
+// the axis thread starts, nothing can arm then except through the pending startup request.
+static flash_guard_t s_flash_guard{};
+
+static void flash_guard_read_axes(flash_guard_axis_t (&now)[AXIS_COUNT]) {
+    for (size_t i = 0; i < AXIS_COUNT; ++i) {
+        now[i].armed = axes[i].motor_.is_armed_;
+        now[i].state_requested = axes[i].requested_state_ != Axis::AXIS_STATE_UNDEFINED;
+        now[i].state_active = axes[i].current_state_ != Axis::AXIS_STATE_IDLE
+                           && axes[i].current_state_ != Axis::AXIS_STATE_UNDEFINED;
+    }
+}
+
+// Atomic with the is_armed_ update in Motor::arm: whichever comes first wins.
+extern "C" bool odrive_bridge_flash_begin(void) {
+    bool allowed = false;
+    CRITICAL_SECTION() {
+        flash_guard_axis_t now[AXIS_COUNT];
+        flash_guard_read_axes(now);
+        allowed = flash_guard_try_begin(&s_flash_guard, now, AXIS_COUNT);
+    }
+    return allowed;
+}
+
+extern "C" void odrive_bridge_flash_end(void) {
+    CRITICAL_SECTION() {
+        flash_guard_finish(&s_flash_guard);
+    }
+}
+
+extern "C" bool odrive_bridge_flash_arm_allowed(void) {
+    bool allowed = false;
+    CRITICAL_SECTION() {
+        allowed = flash_guard_arm_allowed(&s_flash_guard);
+    }
+    return allowed;
+}
+
+extern "C" void odrive_bridge_flash_status(char *buf, size_t buf_size) {
+    flash_guard_t guard{};
+    flash_guard_verdict_t verdict = FLASH_GUARD_ALLOWED;
+    CRITICAL_SECTION() {
+        flash_guard_axis_t now[AXIS_COUNT];
+        flash_guard_read_axes(now);
+        guard = s_flash_guard;
+        verdict = flash_guard_check(now, AXIS_COUNT, guard.busy);
+    }
+    flash_guard_format_status(&guard, verdict, buf, buf_size);
 }

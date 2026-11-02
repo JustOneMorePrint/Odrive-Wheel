@@ -182,7 +182,7 @@ bool Axis::watchdog_check() {
 }
 
 bool Axis::run_lockin_spin(const LockinConfig_t &lockin_config, bool remain_armed,
-        std::function<bool(bool)> loop_cb) {
+        std::function<bool(bool)> loop_cb, std::function<void()> on_armed) {
     CRITICAL_SECTION() {
         // Reset state variables
         open_loop_controller_.Idq_setpoint_ = {0.0f, 0.0f};
@@ -211,7 +211,13 @@ bool Axis::run_lockin_spin(const LockinConfig_t &lockin_config, bool remain_arme
     }
     wait_for_control_iteration();
 
-    motor_.arm(&motor_.current_control_);
+    // [pkgS] Refused during a flash operation: nothing started, on_armed stays out.
+    if (!motor_.arm(&motor_.current_control_)) {
+        return false;
+    }
+    if (on_armed) {
+        on_armed();
+    }
 
     bool subscribed_to_idx_once = false;
     bool success = false;
@@ -256,6 +262,8 @@ bool Axis::run_lockin_spin(const LockinConfig_t &lockin_config, bool remain_arme
 
 bool Axis::start_closed_loop_control() {
     bool sensorless_mode = config_.enable_sensorless_mode;
+    // [pkgS] A return before the arm() below must not report an older refusal.
+    motor_.arm_refused_ = false;
 
     if (sensorless_mode) {
         // TODO: restart if desired
@@ -325,7 +333,9 @@ bool Axis::start_closed_loop_control() {
     // In sensorless mode the motor is already armed.
     if (!motor_.is_armed_) {
         wait_for_control_iteration();
-        motor_.arm(&motor_.current_control_);
+        if (!motor_.arm(&motor_.current_control_)) {  // [pkgS] refused during a flash operation
+            return false;
+        }
     }
 
     return true;
@@ -368,6 +378,9 @@ bool Axis::run_homing() {
     controller_.input_vel_ = -controller_.config_.homing_speed;
     controller_.input_torque_ = 0.0f;
 
+    const bool was_homed = homing_.is_homed;  // [pkgS]
+    const Error endstop_error = error_ & ERROR_MIN_ENDSTOP_PRESSED;  // [pkgS]
+
     homing_.is_homed = false;
 
     error_ &= ~ERROR_MIN_ENDSTOP_PRESSED;
@@ -375,6 +388,13 @@ bool Axis::run_homing() {
     bool done = false;
 
     start_closed_loop_control();
+
+    // [pkgS] Refused during a flash operation: the axis did not move, so the last result and the
+    // endstop error still stand.
+    if (motor_.arm_refused_) {
+        homing_.is_homed = was_homed;
+        error_ |= endstop_error;
+    }
 
     // Driving toward the endstop
     while ((requested_state_ == AXIS_STATE_UNDEFINED) && motor_.is_armed_ && !(done = min_endstop_.get_state())) {
@@ -401,7 +421,13 @@ bool Axis::run_homing() {
 
     // Initialize closed loop control, and then set the desired location.
     start_closed_loop_control();
-    
+
+    // [pkgS] Refused during a flash operation: done still holds the first phase, so this would count
+    // as finished and zero the position. The axis moved, so the old homing result stays cleared.
+    if (motor_.arm_refused_) {
+        return false;
+    }
+
     controller_.input_pos_ = pos_estimate_local.value() + min_endstop_.config_.offset;
     controller_.pos_setpoint_ = pos_estimate_local.value();
     controller_.vel_setpoint_ = 0.0f;

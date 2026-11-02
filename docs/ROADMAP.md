@@ -30,6 +30,7 @@ Arbeitsregeln: `CLAUDE.md`. Testvorgehen: `docs/TESTING.md`.
 | 5 | Stromregler | ☐ |
 | 6 | Encoder und Anticogging | ☐ |
 | 7 | Beobachter und Hands-off | ☐ |
+| S1 | Flash-Schutz in der Firmware, siehe unten | ☐ |
 
 Reihenfolge: 0, dann 1. Danach beliebig. Ausführliche Spezifikationen der Pakete
 liegen unter `docs/packages/PKGn.md` und werden vor dem Start des jeweiligen Pakets
@@ -45,6 +46,7 @@ angelegt.
 | 5 | `0x0680–0x06BF` | `cur.*` | – |
 | 6 | `0x06C0–0x06FF` | `enc.*` | Flash-Sektor 9 (`0x080A0000`, 128 KB) |
 | 7 | `0x0700–0x073F` | `obs.*` | – |
+| S1 | – | `safe.*` | – |
 | Reserve | `0x0740–0x07FF` | – | – |
 
 Bereits belegt (nicht verwenden): `0x0000–0x0004`, `0x00FF`, `0x0100–0x0106`,
@@ -139,6 +141,90 @@ Kein Feature-Paket, sondern Vorbereitung. Ändert kein Fahrverhalten.
 | J und b als Parameter | Läuft auch ohne Paket 2 | `cmd_table.cpp` (`obs.*`), `eeprom_addresses.*` |
 | Hands-off-Erkennung und -Reaktion am Drehmoment-Sollwert | Rad schlägt beim Loslassen nicht aus | `observer.*`, Bridge |
 | Bedienung, Status | – | Plugin: Steuerelement |
+
+## S1 – Flash-Schutz in der Firmware
+
+Reiner Schutz ohne Schalter, vom Nutzer freigegebene Ausnahme von Regel 1. Setzt kein anderes
+Paket voraus. Wo dieser Schritt und mögliche weitere Sicherheits- und Messschritte in der
+Reihenfolge stehen, ist noch nicht entschieden.
+
+Beim Schreiben oder Löschen steht die CPU, weil sie ihren Code aus demselben Flash holt, und mit ihr
+der Regel-Interrupt. Die PWM bleibt dann auf dem letzten Wert, und niemand regelt den Strom. Deshalb:
+
+- **Keine Flash-Operation, solange ein Motor aktiv ist.** Aktiv heißt auf irgendeiner Achse: Motor
+  scharf, angeforderter Zustandswechsel noch nicht übernommen oder Achse nicht in IDLE.
+- **Kein Armen während einer Flash-Operation.** `Motor::arm` verweigert. Der Schutz führt dafür keinen
+  eigenen Fehlercode ein, und der Start schlägt ohne Änderung an Kalibrierwerten fehl (siehe „Verweigertes Armen“).
+
+| Weg | Bei aktivem Motor, laut Code |
+|---|---|
+| `sys.save!`, `sys.save?` | Antwort `ERR`, `sys.savestat?` bleibt unverändert |
+| `sys.eetest!`, `sys.eetest?` | Antwort `ERR` |
+| `sys.eedump?` | Antwort `ERR`. Der Befehl schreibt trotz `?` einen Testwert und kann über `EE_Init` löschen |
+| `sys.eeformat!`, `sys.eeformat?` | Antwort `ERR` |
+| `se` | Keine Wirkung und keine Antwort, wie `ss` |
+| `ss` | Unverändert, der Schutz stammt aus der Original-ODrive-Firmware |
+
+`safe.status?` liefert `now=<allowed|busy|armed|requested|active> blocked=<n> last=<none|busy|armed|requested|active> armrefused=<n>`:
+was jetzt gälte, wie viele Flash-Operationen seit dem Start abgelehnt wurden, der letzte Grund und
+wie viele Armen-Versuche in eine Flash-Operation fielen.
+
+Mit allen Achsen in IDLE verhalten sich die Befehle laut Code wie bisher. Beim Booten läuft
+`ffb_init_storage_early` weiter ohne Schutz, die Achsen-Threads starten erst danach. Neue
+Flash-Aufrufe fallen in `tests/host/test_flash_paths.sh` auf.
+
+### Verweigertes Armen
+
+`Motor::arm` gibt `false` zurück und merkt sich das in `arm_refused_`, einer Laufzeitvariable außerhalb der
+Config. Der Schutz führt keinen eigenen Fehlercode ein. Jeder der fünf Aufrufer behandelt das ausdrücklich: Ein
+verweigerter Start schlägt fehl und lässt Kalibrierwerte und Kennzeichen unverändert.
+
+| Weg | Bleibt bei verweigertem Start erhalten | Umsetzung |
+|---|---|---|
+| Motorkalibrierung (`measure_phase_resistance`, `measure_phase_inductance`) | `phase_resistance`, `phase_inductance`, `is_calibrated_`, Reglerverstärkungen | Rückkehr direkt nach dem Armversuch |
+| Index-Suche | `use_index`, `index_found_` | Änderung läuft erst nach dem Armen |
+| Hall-Polarität | `hall_polarity`, `hall_polarity_calibrated`, `states_seen_count_` | Änderung läuft erst nach dem Armen |
+| Hall-Phase | `hall_edge_phcnt`, `hall_phase_calib_seen_count_`, `direction` | Änderung läuft erst nach dem Armen, der Fehlerpfad setzt die Standardwerte nicht mehr |
+| Richtungssuche, Lock-in | `direction` | War schon so |
+| Encoder-Offset | `shadow_count_`, `phase_offset`, `phase_offset_float`, `direction`, `is_ready_` | Der Abgleich von `shadow_count_` läuft erst nach dem Armen |
+| Closed Loop | Kein neuer Fehler, Achse geht auf IDLE | `start_closed_loop_control` meldet `false` |
+| Homing, erste Phase | `is_homed`, Endstopp-Fehler | Wird wiederhergestellt, die Achse hat sich nicht bewegt |
+| Homing, zweite Phase | Die Position wird nicht genullt | Abbruch. `is_homed` bleibt `false`, die Achse hat sich bewegt |
+
+Für die Werte, die erst nach dem Armen geändert werden, bekam `Axis::run_lockin_spin` den Parameter `on_armed`.
+Ein Vorabcheck des Schutzes würde das Zeitfenster bis zum Armen nicht schließen, hier entscheidet das Armen selbst.
+
+**Unverändert bleibt:**
+
+- Im Erfolgsweg ändert sich nur die Reihenfolge: Die genannten Werte werden direkt nach statt kurz vor dem Armen gesetzt.
+- Bereits gestartete, später abgebrochene Kalibrierungen verhalten sich wie bisher. Eine abgebrochene
+  Widerstandsmessung schreibt zum Beispiel weiter ihren Zwischenwert, eine abgebrochene Hall-Phase setzt die Standardwerte.
+- `Motor::arm` gibt bei entschärftem Bremswiderstand weiter `true` zurück, ohne zu armen. Das ist kein verweigerter
+  Start durch den Schutz und unverändertes Verhalten: Die Messungen schreiben dann weiter ohne Messung.
+
+Ein verweigerter Start setzt voraus, dass die Anforderung eintrifft, während eine Flash-Operation läuft. Über USB
+laufen Befehle nacheinander im selben Thread, über CAN oder UART ist es möglich. Die USB-Reihenfolge ist also
+keine firmwareweite Absicherung, deshalb die Behandlung in den Aufrufern. Nach dem verweigerten Start geht die Achse
+auf IDLE, dort schließt die Bremse wieder, falls sie im Zeitfenster schon geöffnet wurde.
+
+### Nachweisstand
+
+**Automatisiert, ohne Board:** `tests/host/test_arm_refusal.cpp` führt die echten Produktionsfunktionen auf dem PC
+aus, mit Stubs für Hardware und umgebende Klassen, und prüft verweigerte Starts, den normalen Erfolgsweg und
+abgebrochene Abläufe. `test_flash_guard.cpp` prüft die Entscheidung, `test_flash_paths.sh` die Flash-Aufrufe im
+Quelltext. Das Motorverhalten ist dabei simuliert, die Firmware läuft nicht auf dem Zielprozessor.
+
+**Am Board noch offen:** T2 und T3 aus [PR #3](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/3), auch die
+Kalibrierungen mit der geänderten Reihenfolge.
+
+Bei aktivem Motor werden am angetriebenen Lenkrad zum Testen keine Flash-Befehle gesendet, nur Statusabfragen. Bei
+versagender Sperre wären sie echte Flash-Zugriffe, und auch ein EEPROM-Seitenwechsel oder `EE_Init` können löschen.
+Softwaregrenzen wie `axis.maxtorque` oder `current_lim` sind dafür keine verlässliche Absicherung. Schreibtests laufen
+nur bei nachweislich inaktiven Achsen.
+
+Statusabfragen weisen die Wirkung der Sperre nicht nach. Auch nach T2 und T3 bleibt am Board ungeprüft, ob die gebaute
+Firmware bei aktivem Motor wirklich ablehnt und ob `Motor::arm` während einer Flash-Operation verweigert. Ein möglicher
+zusätzlicher Versuch ist im PR beschrieben und nicht ausgeführt.
 
 ## Optionale Verzahnungen
 

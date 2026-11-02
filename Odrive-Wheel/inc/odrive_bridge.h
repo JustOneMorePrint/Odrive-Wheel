@@ -5,6 +5,8 @@
 #ifndef ODRIVE_BRIDGE_H_
 #define ODRIVE_BRIDGE_H_
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -103,6 +105,13 @@ struct mt6835_snap_t {
     int cal_state;     // reg 0x113[7:6]: 0 none, 1 running, 2 failed, 3 ok; -1 = leitura falhou
 };
 void odrive_bridge_mt6835_get_status(struct mt6835_snap_t *snap);
+
+// [pkgS] Flash guard, the rule is in flash_guard.h. Every flash operation at runtime runs between
+// begin and end. If begin returns false, nothing may touch the flash and end must not follow.
+bool odrive_bridge_flash_begin(void);
+void odrive_bridge_flash_end(void);
+bool odrive_bridge_flash_arm_allowed(void);
+void odrive_bridge_flash_status(char *buf, size_t buf_size);
 
 #ifdef __cplusplus
 }

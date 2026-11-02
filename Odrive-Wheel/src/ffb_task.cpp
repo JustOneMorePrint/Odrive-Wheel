@@ -995,6 +995,8 @@ static volatile int s_last_save_errors = 0;
 
 extern "C" int ffb_save_flash(void) {
     if (!s_effects_calc) return 0;
+    // [pkgS] Refused with a motor active. Before the counters, so sys.savestat? keeps the last save.
+    if (!odrive_bridge_flash_begin()) return 0;
     s_last_save_writes = 0;
     s_last_save_errors = 0;
 
@@ -1102,6 +1104,7 @@ extern "C" int ffb_save_flash(void) {
     }
 
     HAL_FLASH_Lock();
+    odrive_bridge_flash_end();  // [pkgS]
     return s_last_save_errors == 0 ? 1 : 0;
 }
 
@@ -1110,13 +1113,16 @@ extern "C" int ffb_save_errors(void) { return s_last_save_errors; }
 
 // Phase 3.5 — diagnóstico EEPROM: write+read um valor conhecido em endereço
 // reservado (0x04F1) e reporta sucesso/falha no nível baixo.
+// [pkgS] -1 = refused by the flash guard, nothing was written.
 extern "C" int ffb_eetest(uint16_t want, uint16_t *got_out) {
+    if (!odrive_bridge_flash_begin()) return -1;  // [pkgS]
     HAL_FLASH_Unlock();
     __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP    | FLASH_FLAG_OPERR  |
                            FLASH_FLAG_WRPERR | FLASH_FLAG_PGAERR |
                            FLASH_FLAG_PGSERR | FLASH_FLAG_PGPERR);
     bool wok = Flash_Write(0x04F1, want);
     HAL_FLASH_Lock();
+    odrive_bridge_flash_end();  // [pkgS]
     uint16_t got = 0xFFFF;
     bool rok = Flash_Read(0x04F1, &got, false);
     if (got_out) *got_out = got;
@@ -1131,8 +1137,11 @@ extern "C" int ffb_eetest(uint16_t want, uint16_t *got_out) {
 extern "C" {
 #include "eeprom.h"
 }
-extern "C" void ffb_eedump(char *buf, int bufsize) {
-    if (!buf || bufsize < 96) { if (buf && bufsize > 0) buf[0] = 0; return; }
+// [pkgS] -1 = refused by the flash guard. EE_Init and the test write make this a flash operation,
+// although it is called with sys.eedump?.
+extern "C" int ffb_eedump(char *buf, int bufsize) {
+    if (!buf || bufsize < 96) { if (buf && bufsize > 0) buf[0] = 0; return 0; }
+    if (!odrive_bridge_flash_begin()) return -1;  // [pkgS]
     uint16_t p0_pre = *(volatile uint16_t*)PAGE0_BASE_ADDRESS;
     uint16_t p1_pre = *(volatile uint16_t*)PAGE1_BASE_ADDRESS;
 
@@ -1144,6 +1153,7 @@ extern "C" void ffb_eedump(char *buf, int bufsize) {
     uint16_t wrc = EE_WriteVariable(0x04F2, 0x5A5A);
     uint32_t hal_err = HAL_FLASH_GetError();
     HAL_FLASH_Lock();
+    odrive_bridge_flash_end();  // [pkgS]
 
     uint16_t got = 0xFFFF;
     uint16_t rrc = EE_ReadVariable(0x04F2, &got);
@@ -1158,14 +1168,17 @@ extern "C" void ffb_eedump(char *buf, int bufsize) {
              (unsigned)s_boot_ee_init_rc,
              (unsigned)init_rc, (unsigned)wrc, (unsigned)rrc,
              (unsigned)got, (unsigned long)hal_err);
+    return 0;
 }
 
 // Phase 4.x — escape hatch: força format completo do EE com clear error
 // flags. Usar quando bootRC != 0 e sys.save! continua falhando, ou quando
 // suspeitamos de estado corrompido das pages. Reporta status de cada etapa
 // pra diagnóstico.
-extern "C" void ffb_eeformat(char *buf, int bufsize) {
-    if (!buf || bufsize < 96) { if (buf && bufsize > 0) buf[0] = 0; return; }
+// [pkgS] -1 = refused by the flash guard, nothing was erased.
+extern "C" int ffb_eeformat(char *buf, int bufsize) {
+    if (!buf || bufsize < 96) { if (buf && bufsize > 0) buf[0] = 0; return 0; }
+    if (!odrive_bridge_flash_begin()) return -1;  // [pkgS]
 
     HAL_FLASH_Unlock();
     __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP    | FLASH_FLAG_OPERR  |
@@ -1206,6 +1219,7 @@ extern "C" void ffb_eeformat(char *buf, int bufsize) {
     EE_WriteVariable(ADR_FLASH_VERSION, EE_LAYOUT_VERSION);
 
     HAL_FLASH_Lock();
+    odrive_bridge_flash_end();  // [pkgS]
 
     uint16_t p0_post = *(volatile uint16_t*)PAGE0_BASE_ADDRESS;
     uint16_t p1_post = *(volatile uint16_t*)PAGE1_BASE_ADDRESS;
@@ -1215,6 +1229,7 @@ extern "C" void ffb_eeformat(char *buf, int bufsize) {
              (unsigned)rc_e0, (unsigned)rc_pgm, (unsigned)rc_e1,
              (unsigned long)hal0, (unsigned long)hal1,
              (unsigned)p0_post, (unsigned)p1_post);
+    return 0;
 }
 
 // Axis params (axis.range / axis.maxtorque / axis.fxratio) — persistem via
