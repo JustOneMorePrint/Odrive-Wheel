@@ -102,6 +102,7 @@ C_SOURCES_LOCAL = \
   src/eeprom.c \
   src/eeprom_addresses.c \
   src/cmdparser.c \
+  src/firmware_capabilities.c \
   src/flash_guard.c
 
 CPP_SOURCES_LOCAL = \

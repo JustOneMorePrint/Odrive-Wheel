@@ -152,12 +152,15 @@
                                  Margin="0,0,8,0" VerticalAlignment="Center"/>
                         <TextBlock x:Name="ConnectionText" Text="…" VerticalAlignment="Center"/>
                     </StackPanel>
-                    <TextBlock x:Name="AxisStateText" Style="{StaticResource Muted}" Margin="20,4,0,8"/>
+                    <TextBlock x:Name="AxisStateText" Style="{StaticResource Muted}" Margin="20,4,0,0"/>
+                    <TextBlock x:Name="CapabilityText" Style="{StaticResource Muted}" Margin="20,2,0,8"/>
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="PortButton" Content="Release port"
                                 Style="{StaticResource SecondaryButton}" Click="OnTogglePort"/>
                         <Button x:Name="ClearStopButton" Content="Clear stop" Visibility="Collapsed"
                                 Style="{StaticResource SecondaryButton}" Click="OnClearStop"/>
+                        <Button x:Name="CheckCapabilitiesButton" Content="Check firmware again" Visibility="Collapsed"
+                                Style="{StaticResource SecondaryButton}" Click="OnCheckCapabilities"/>
                     </StackPanel>
                 </StackPanel>
 

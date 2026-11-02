@@ -75,10 +75,22 @@ namespace OdriveWheel.SimHubPlugin
         {
             ConnectGeneration = connectGeneration;
             LastStop          = lastStop;
+            BindsStop         = true;
         }
+
+        private SerialOperationContext(int connectGeneration)
+        {
+            ConnectGeneration = connectGeneration;
+        }
+
+        /// <summary>Only the connection counts, for a harmless read that also has to work while the stop
+        /// latch is set. A running stop still ends it, and whatever the latch blocks stays blocked.</summary>
+        public static SerialOperationContext ForConnection(int connectGeneration)
+            => new SerialOperationContext(connectGeneration);
 
         public int        ConnectGeneration { get; }
         public StopTicket LastStop          { get; }
+        public bool       BindsStop         { get; }
     }
 
     public sealed class SerialRequest

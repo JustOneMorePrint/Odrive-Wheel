@@ -63,6 +63,9 @@ namespace OdriveWheel.SimHubPlugin
     /// connection it was read on, so it can never pass for the state of a board that may have
     /// rebooted. This class can only read: it gets nothing but the read delegate. Safe to use
     /// from any thread.
+    ///
+    /// The text of a value is worked out when it is asked for, with what the firmware of that
+    /// connection has declared by then. So a value read before the check ended needs no second read.
     /// </summary>
     public sealed class OdriveParameterReader
     {
@@ -80,17 +83,21 @@ namespace OdriveWheel.SimHubPlugin
 
         private readonly ReadParameter _read;
         private readonly Func<SerialStatus> _getStatus;
+        private readonly Func<int, FirmwareCapabilities> _capabilitiesFor;
         private readonly ConcurrentDictionary<string, ParameterReading> _readings
             = new ConcurrentDictionary<string, ParameterReading>(StringComparer.Ordinal);
         private int _version;
 
-        public OdriveParameterReader(ReadParameter read, Func<SerialStatus> getStatus)
+        /// <param name="capabilitiesFor">What the firmware declared on a connection. Without it replies
+        /// stay in doubt, as they do on firmware that declares nothing.</param>
+        public OdriveParameterReader(ReadParameter read, Func<SerialStatus> getStatus, Func<int, FirmwareCapabilities> capabilitiesFor = null)
         {
             _read      = read ?? throw new ArgumentNullException(nameof(read));
             _getStatus = getStatus ?? throw new ArgumentNullException(nameof(getStatus));
+            _capabilitiesFor = capabilitiesFor ?? (_ => null);
         }
 
-        /// <summary>Changes with every stored result. The connection can change a reading too.</summary>
+        /// <summary>Changes with every stored result. The connection and a declaration can change a reading too.</summary>
         public int Version => Volatile.Read(ref _version);
 
         /// <summary>What to show for this parameter right now.</summary>
@@ -99,13 +106,24 @@ namespace OdriveWheel.SimHubPlugin
             if (!_readings.TryGetValue(parameter.Path, out var reading)) return NeverRead;
 
             var status = _getStatus();
-            if (status.IsConnected && reading.ConnectGeneration == status.ConnectGeneration) return reading;
+            if (status.IsConnected && reading.ConnectGeneration == status.ConnectGeneration) return WithDeclaration(parameter, reading);
 
             // A failure belongs to its connection as well, it says nothing about this one.
             return reading.State == ParameterReadState.Current
                 ? new ParameterReading(ParameterReadState.Outdated, "outdated (was " + reading.Text + ")",
                                        StatusSeverity.Warning, null, reading.ConnectGeneration)
                 : NeverRead;
+        }
+
+        // The same firmware answered, so what it declares goes for an earlier reply of this connection as well.
+        private ParameterReading WithDeclaration(ParameterDefinition parameter, ParameterReading reading)
+        {
+            if (reading.State != ParameterReadState.Current) return reading;
+
+            var formatted = OdriveParameterFormat.Format(parameter, reading.RawValue, _capabilitiesFor(reading.ConnectGeneration));
+            return formatted.Text == reading.Text
+                ? reading
+                : new ParameterReading(reading.State, formatted.Text, formatted.Severity, reading.ReadAt, reading.ConnectGeneration, reading.RawValue);
         }
 
         /// <summary>Forgets a value that was written or may have been: what was read before says nothing now.</summary>

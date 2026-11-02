@@ -26,21 +26,27 @@ namespace OdriveWheel.SimHubPlugin
     {
         private const string MayBeCutOff = "may be cut off";
 
-        public static FormattedValue Format(ParameterDefinition definition, string value)
+        /// <param name="capabilities">What the firmware the reply came from declared. Without it a long
+        /// number may have been cut, so it is marked.</param>
+        public static FormattedValue Format(ParameterDefinition definition, string value, FirmwareCapabilities capabilities = null)
+            => Format(definition, value, capabilities != null && capabilities.AsciiFull);
+
+        /// <param name="whole">Known to be the whole number, because of a declaration or because it is no reply at all.</param>
+        internal static FormattedValue Format(ParameterDefinition definition, string value, bool whole)
         {
             switch (definition.Type)
             {
-                case ParameterType.Bitmask:   return FormatBitmask(definition, value);
+                case ParameterType.Bitmask:   return FormatBitmask(definition, value, whole);
                 case ParameterType.AxisState: return FormatAxisState(value);
                 case ParameterType.Enum:      return FormatEnum(definition, value);
                 case ParameterType.Boolean:   return FormatBoolean(value);
-                case ParameterType.Integer:   return FormatInteger(definition, value);
-                case ParameterType.Float:     return FormatFloat(definition, value);
+                case ParameterType.Integer:   return FormatInteger(definition, value, whole);
+                case ParameterType.Float:     return FormatFloat(definition, value, whole);
                 default:                      return new FormattedValue(WithUnit(definition, value));
             }
         }
 
-        private static FormattedValue FormatBitmask(ParameterDefinition definition, string value)
+        private static FormattedValue FormatBitmask(ParameterDefinition definition, string value, bool whole)
         {
             if (value == "0") return new FormattedValue("0 (no error)");
             if (definition.ErrorKind == ParameterErrorKind.None) return new FormattedValue(value);
@@ -48,7 +54,7 @@ namespace OdriveWheel.SimHubPlugin
                 return Unexpected(value);
 
             // A cut-off number decodes to bits that are not set.
-            if (FillsTheReply(definition, value))
+            if (!whole && FillsTheReply(definition, value))
                 return new FormattedValue(value + " (" + MayBeCutOff + ", not decoded)", StatusSeverity.Danger, mayBeCutOff: true);
             if (mask > uint.MaxValue)
                 return new FormattedValue(value + " (above 32 bits, not decoded)", StatusSeverity.Danger);
@@ -79,22 +85,22 @@ namespace OdriveWheel.SimHubPlugin
             }
         }
 
-        private static FormattedValue FormatInteger(ParameterDefinition definition, string value)
+        private static FormattedValue FormatInteger(ParameterDefinition definition, string value, bool whole)
         {
             bool isNumber = long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _)
                          || ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out _);
             if (!isNumber) return Unexpected(value);
-            return WithCutOffNote(definition, value, FillsTheReply(definition, value));
+            return WithCutOffNote(definition, value, !whole && FillsTheReply(definition, value));
         }
 
-        private static FormattedValue FormatFloat(ParameterDefinition definition, string value)
+        private static FormattedValue FormatFloat(ParameterDefinition definition, string value, bool whole)
         {
             if (IsInfinityOrNan(value)) return new FormattedValue(WithUnit(definition, value));
             if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
                 return Unexpected(value);
 
             // With a '.' in the reply only decimals are gone, without one the number itself is wrong.
-            return WithCutOffNote(definition, value, FillsTheReply(definition, value) && value.IndexOf('.') < 0);
+            return WithCutOffNote(definition, value, !whole && FillsTheReply(definition, value) && value.IndexOf('.') < 0);
         }
 
         private static FormattedValue WithCutOffNote(ParameterDefinition definition, string value, bool mayBeCutOff)

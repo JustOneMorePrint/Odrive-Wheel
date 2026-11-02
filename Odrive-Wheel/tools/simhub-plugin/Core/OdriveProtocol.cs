@@ -90,8 +90,8 @@ namespace OdriveWheel.SimHubPlugin
 
         /// <summary>The most characters an ODrive read returns on older firmware: cmd_read_property
         /// formatted into a 10-byte buffer and to_string cut without any notice, so a longer number
-        /// arrives shortened and looks like a valid one. Newer firmware sends the whole value, but
-        /// the plugin cannot tell yet which one it talks to, so this limit stays.</summary>
+        /// arrives shortened and looks like a valid one. Newer firmware sends the whole value and says
+        /// so through sys.capabilities?. Without that declaration this limit counts.</summary>
         public const int OdriveReadLimit = 9;
 
         /// <summary>True for the error texts of ascii_protocol.cpp.</summary>

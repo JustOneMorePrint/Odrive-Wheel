@@ -23,19 +23,31 @@ namespace OdriveWheel.SimHubPlugin.Tests
         {
             public Rig Rig { get; }
             public OdriveConfigWindowHost Host { get; }
+            /// <summary>Null unless asked for: most tests are about the window on its own.</summary>
+            public OdriveCapabilityDetector Capabilities { get; }
             public int Created;
 
             public WindowRig(params Func<IFeaturePanel>[] panels) : this(null, null, panels) { }
 
             public WindowRig(Action<FakeBoard> prepare, IPowerSupplyStore powerSupplyStore, params Func<IFeaturePanel>[] panels)
+                : this(prepare, powerSupplyStore, false, panels) { }
+
+            public WindowRig(Action<FakeBoard> prepare, bool detectCapabilities) : this(prepare, null, detectCapabilities, new Func<IFeaturePanel>[0]) { }
+
+            private WindowRig(Action<FakeBoard> prepare, IPowerSupplyStore powerSupplyStore, bool detectCapabilities, Func<IFeaturePanel>[] panels)
             {
                 Rig = new Rig(prepare: prepare);
+                if (detectCapabilities)
+                {
+                    Capabilities = new OdriveCapabilityDetector(Rig.Service, Rig.Parameters);
+                    Capabilities.Start();
+                }
                 Host = new OdriveConfigWindowHost(() =>
                 {
                     Interlocked.Increment(ref Created);
                     return new OdriveConfigWindow(Rig.Service, Rig.Parameters, OdriveParameterCatalog.LoadEmbedded(),
                                                   () => Rig.HidState, m => Console.WriteLine("window: " + m),
-                                                  panels.Length > 0 ? panels : null, powerSupplyStore);
+                                                  panels.Length > 0 ? panels : null, powerSupplyStore, Capabilities);
                 }, m => Console.WriteLine("host: " + m));
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 Host.Show();
@@ -53,6 +65,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             public void Dispose()
             {
                 Host.Close(2000);
+                Capabilities?.Stop();
                 Rig.Dispose();
             }
         }

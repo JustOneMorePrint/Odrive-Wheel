@@ -33,6 +33,7 @@ Erfolgreicher Lauf:
 test_arm_refusal.cpp: <n> checks, 0 failed
 test_ascii_read.cpp: <n> checks, 0 failed
 test_example_clamp.cpp: 5 checks, 0 failed
+test_firmware_capabilities.cpp: <n> checks, 0 failed
 test_flash_guard.cpp: <n> checks, 0 failed
 test_build_info.sh: <n> checks, 0 failed, 0 skipped
 test_make_clean.sh: <n> checks, 0 failed
@@ -79,6 +80,16 @@ und erkennt eine negative Null nicht.
 und das Ergebnis eines korrekten `printf`, **nicht** das Verhalten von `%.9g` in newlib-nano auf dem Board.
 Nachgebildet wird davon nur, dass dort `%llu` und `%lld` fehlen. `process_line` läuft nicht mit, das braucht
 den größten Teil der Firmware.
+
+## Firmware capabilities: `sys.capabilities?`
+
+| File | Checks |
+|---|---|
+| `test_firmware_capabilities.cpp` | The real handler in the real parser: the whole reply frame, `ERR` for set and exec with nothing changed, no shortened reply in a small buffer, the sizes on the way. By text: the one registration in `cmd_table.cpp`, the source in the Makefile, the contract in `docs/packages/PKG1.md` |
+| `test_ascii_read.cpp` | What is declared against the real formatting: the longest values through the real read, and a float32 round trip through it for 20000 values |
+
+The limits of `test_ascii_read.cpp` above apply: the declaration holds for a correct `printf`, which is not yet
+shown for newlib-nano on the board. `process_line` does not run, it routes `sys.capabilities?` by its `.` and `?`.
 
 ## Tests der Build-Kennung (`sys.build?`)
 

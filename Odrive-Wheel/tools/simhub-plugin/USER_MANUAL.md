@@ -358,10 +358,20 @@ can also say:
 
 Older firmware returns **at most 9 characters** from an ODrive read and cuts
 longer numbers without saying so. A number that fills all 9 may therefore be
-wrong. Newer firmware sends the whole value, but the plugin cannot tell yet which
-one it talks to: a number with 9 or more characters is always marked, and error
-bits are not decoded in that case. With a decimal point in the reply only decimals
-can be lost, so `100.00000` means 100.
+wrong, and a reply alone does not show which firmware sent it. So current firmware
+says it: when a connection comes up, the plugin asks once with `sys.capabilities?`,
+and the line **Firmware replies** at the top of the window shows the result.
+
+| Firmware replies | Meaning |
+|---|---|
+| `declared complete and exact on this connection` | Numbers are shown as they come, and error bits are decoded. |
+| `nothing declared (…)` | Older firmware, no reply or an unusable one. A number with 9 or more characters is marked, and error bits are not decoded in that case. With a decimal point in the reply only decimals can be lost, so `100.00000` means 100. |
+| `checking…` | The answer is not here yet. Values already shown are redrawn when it arrives. |
+
+**Check firmware again** asks once more, it appears only after a check that found
+nothing. It ends a prepared review and a running **Apply to RAM**, as they rest on
+the state before. The plugin does not conclude anything from the version or the build
+id, and a new connection is always asked again, as another firmware may be on the board.
 
 Newer firmware also writes floats with up to nine significant digits, so `25`,
 `0.100000001` or `1.17549435e-38` instead of `25.000000`, `0.100000` or `0.000000`.
@@ -392,7 +402,6 @@ Power / Brake. `sys.vbusdiv` and the communication values stay read-only.
 1. Press **Refresh these values**. Without a current and exact value for all ten, there
    is no review.
 2. Type the new values and tick their fields. Typing sends nothing. A boolean is 0 or 1.
-   Use at most two decimals if you can, see below.
 3. Press **Review selected changes**. The summary shows old and new values in the order
    they will be written, and whatever speaks against them. The new value is the float32
    the firmware will store, which can differ slightly from what you typed. A review
@@ -415,17 +424,20 @@ source can still change the state between the check and the write.
 A write has no answer of its own, so only the readback can confirm it. Each next
 write rests on the one before, so **anything but `verified by readback` ends the run**,
 and the result names what already went out. It is not repeated and not undone. A
-software stop, **Release port** or a new connection ends it as well, also if it comes
-while a command is on its way: nothing more goes out, and a reply that comes in after
-it confirms nothing.
+software stop, **Release port**, a new connection or a change of **Firmware replies**
+ends it as well, also if it comes while a command is on its way: nothing more goes
+out, and a reply that comes in after it confirms nothing.
 
-**Unclear values:** older firmware rounds and cuts what it reads, and a value like
-`56.000000` or `123.45678` could come from that. The relations cannot be judged from
-such a value, so the review refuses it and names the field. On older firmware that
-is nearly every float. On current firmware it is rare, but it happens: `32.012` reads
-`32.012001`, which looks the same. Values with at most two decimals do not read like
-this. While one of the ten fields holds such a value, the editor stays refused, until
-a reboot restores the saved value or something else changes it.
+**Exact values:** the relations between the values need what the board really holds.
+With **Firmware replies** at `declared complete and exact`, that is what a reply says,
+also for a value like `32.012001` or `0.015625`, and the readback compares the float32
+values. There is no need to limit the number of decimals.
+
+While the line says `checking…` there is no review, its answer decides what counts as
+exact. Without a declaration, a reply like `56.000000` or `0.015625` could be rounded or cut
+by older firmware. Such a value cannot be judged, so the review refuses it and names
+the field, and a readback in that form does not count as verified. On older firmware
+that is nearly every float, so editing takes a current firmware.
 
 **Applied values are in RAM only.** A reboot restores the saved values. The editor
 never saves to the board. If you want to keep them, that is **Save to flash** in the

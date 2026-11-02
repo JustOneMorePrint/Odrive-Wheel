@@ -20,6 +20,7 @@ namespace OdriveWheel.SimHubPlugin
         // [pkg1] The only owner of the COM port, and what talks through it.
         public IOdriveSerialService   SerialService { get; private set; }
         public IOdriveParameters      Parameters    { get; private set; }
+        public OdriveCapabilityDetector Capabilities { get; private set; }
         public OdriveActionLogic      ActionLogic   { get; private set; }
         public OdriveConfigWindowHost ConfigWindow  { get; private set; }
 
@@ -130,11 +131,14 @@ namespace OdriveWheel.SimHubPlugin
             SerialService = new OdriveSerialService(new SerialPortTransport(serialLog), new WmiPortLocator(),
                                                     hidAxisState, log: serialLog);
             Parameters = new OdriveParameterService(SerialService, serialLog);
+            Capabilities = new OdriveCapabilityDetector(SerialService, Parameters, serialLog);
+            Capabilities.Start();
             SerialService.Start();
             ConfigWindow = new OdriveConfigWindowHost(
                 () => new OdriveConfigWindow(SerialService, Parameters, OdriveParameterCatalog.LoadEmbedded(),
                                              hidAxisState, serialLog,
-                                             powerSupplyStore: new PluginSettingsPowerSupplyStore(() => Settings, SaveSettings)),
+                                             powerSupplyStore: new PluginSettingsPowerSupplyStore(() => Settings, SaveSettings),
+                                             capabilities: Capabilities),
                 serialLog);
 
             ProfileService = new OdriveProfileService(
@@ -189,6 +193,7 @@ namespace OdriveWheel.SimHubPlugin
             _reader = null;
             ProfileService?.Stop();
             ProfileService = null;
+            Capabilities?.Stop();
             SerialService?.Shutdown(1000);
             this.SaveCommonSettings("Settings", Settings);
         }

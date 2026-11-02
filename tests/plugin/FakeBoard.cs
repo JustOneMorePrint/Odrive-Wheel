@@ -70,6 +70,22 @@ namespace OdriveWheel.SimHubPlugin.Tests
         public volatile bool FailNextRead;
         public volatile bool FailNextWrite;
         public volatile bool LocatorThrows;
+        /// <summary>Reads answer like current firmware: whole numbers, floats as %.9g of their float32.</summary>
+        public volatile bool WholeReplies;
+
+        public const string Declaration = "v=1 ascii_full=1 float32_rt=1";
+
+        public void BecomeCurrentFirmware()
+        {
+            WholeReplies = true;
+            SetValue(FirmwareCapabilities.CommandPath, Declaration);
+        }
+
+        public void BecomeOlderFirmware()
+        {
+            WholeReplies = false;
+            lock (_lock) _values.Remove(FirmwareCapabilities.CommandPath);
+        }
 
         public int OpenCount;
         public int CloseCount;
@@ -295,7 +311,9 @@ namespace OdriveWheel.SimHubPlugin.Tests
             switch (parts[0])
             {
                 case "r":
-                    Reply(_values.TryGetValue(parts[1], out var value) ? CutLikeOlderFirmware(value) : "invalid property");
+                    Reply(_values.TryGetValue(parts[1], out var value)
+                        ? (WholeReplies ? LikeCurrentFirmware(parts[1], value) : CutLikeOlderFirmware(value))
+                        : "invalid property");
                     break;
                 case "w":
                     ProcessOdriveWrite(parts[1], parts[2]);
@@ -313,6 +331,15 @@ namespace OdriveWheel.SimHubPlugin.Tests
         // The plugin has to cope with that as long as it cannot tell the firmware versions apart.
         private static string CutLikeOlderFirmware(string value)
             => value.Length > OdriveProtocol.OdriveReadLimit ? value.Substring(0, OdriveProtocol.OdriveReadLimit) : value;
+
+        // to_string in protocol.hpp: %.9g of the float32, where printf and G9 only differ in the case of the 'e'.
+        private static string LikeCurrentFirmware(string path, string value)
+        {
+            var parameter = Catalog.Value.Parameters.FirstOrDefault(p => p.Path == path);
+            if (parameter == null || parameter.Type != ParameterType.Float) return value;
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)) return value;
+            return ((double)(float)parsed).ToString("G9", CultureInfo.InvariantCulture).Replace('E', 'e');
+        }
 
         private void ProcessOdriveWrite(string path, string value)
         {
@@ -340,6 +367,12 @@ namespace OdriveWheel.SimHubPlugin.Tests
             if (!_values.ContainsKey(path))
             {
                 Reply("[" + head + "|NOT_FOUND]");
+                return;
+            }
+            // firmware_capabilities_cmd: get only.
+            if (path == FirmwareCapabilities.CommandPath && kind != '?')
+            {
+                Reply("[" + head + "|ERR]");
                 return;
             }
             switch (kind)

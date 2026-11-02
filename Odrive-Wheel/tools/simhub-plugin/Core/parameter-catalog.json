@@ -15,7 +15,7 @@
     {"path": "hw_version_major", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Hardware version, major part."},
     {"path": "hw_version_minor", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Hardware version, minor part."},
     {"path": "hw_version_variant", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Hardware version, variant."},
-    {"path": "serial_number", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Serial number of the board. It has more digits than a read can return, so it is cut off."},
+    {"path": "serial_number", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Serial number of the board. Firmware that does not declare complete replies cuts it off."},
     {"path": "user_config_loaded", "protocol": "odrive", "type": "integer", "access": "read", "unit": "", "group": "Firmware", "tab": "status", "description": "Size of the configuration loaded at startup, 0 if there was none."},
     {"path": "vbus_voltage", "protocol": "odrive", "type": "float", "access": "read", "unit": "V", "group": "Power", "tab": "status", "poll": true, "description": "Voltage on the DC bus as measured by the ODrive."},
     {"path": "ibus", "protocol": "odrive", "type": "float", "access": "read", "unit": "A", "group": "Power", "tab": "status", "description": "Current on the DC bus as calculated by the ODrive."},

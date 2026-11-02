@@ -149,7 +149,7 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>What goes on the line, which is the float32 the firmware will store.</summary>
         public string CommandValue { get; }
         public double NewValue     { get; }
-        public string NewText => OdriveParameterFormat.Format(Parameter, CommandValue).Text;
+        public string NewText => OdriveParameterFormat.Format(Parameter, CommandValue, whole: true).Text;
     }
 
     /// <summary>The checked outcome of the selected inputs. Nothing can be applied without one.</summary>
@@ -157,7 +157,8 @@ namespace OdriveWheel.SimHubPlugin
     {
         internal PowerBrakeReview(IReadOnlyList<string> errors, IReadOnlyList<PowerBrakeChange> changes, IReadOnlyList<string> unchanged,
                                   IReadOnlyList<string> notes, IReadOnlyDictionary<string, string> reviewedReplies,
-                                  IReadOnlyList<ParameterDefinition> group, int connectGeneration, StopTicket lastStop)
+                                  IReadOnlyList<ParameterDefinition> group, int connectGeneration, StopTicket lastStop,
+                                  FirmwareCapabilityStatus capabilityStatus = null)
         {
             Errors = errors;
             Changes = changes;
@@ -167,6 +168,7 @@ namespace OdriveWheel.SimHubPlugin
             Group = group;
             ConnectGeneration = connectGeneration;
             LastStop = lastStop;
+            CapabilityStatus = capabilityStatus;
         }
 
         public IReadOnlyList<string> Errors { get; }
@@ -181,6 +183,11 @@ namespace OdriveWheel.SimHubPlugin
         internal IReadOnlyList<ParameterDefinition> Group { get; }
         internal int ConnectGeneration { get; }
         internal StopTicket LastStop { get; }
+        /// <summary>The state of the firmware check this review rests on. If it is replaced, this review counts for
+        /// nothing any more, whatever the new state says. Null where no check is in use.</summary>
+        internal FirmwareCapabilityStatus CapabilityStatus { get; }
+        /// <summary>The declaration in that state, for all that follows from it. Null if there was none.</summary>
+        internal FirmwareCapabilities Capabilities => CapabilityStatus?.Capabilities;
     }
 
     public static class OdrivePowerBrakeEditor
@@ -194,11 +201,17 @@ namespace OdriveWheel.SimHubPlugin
         /// <summary>
         /// Checks the selected inputs against what was last read. All values of the group must have been read
         /// on this connection and be clear, because the relations between them cannot be judged otherwise.
-        /// Sends nothing.
+        /// A declaration of the firmware counts only for the connection it was made on. While the check of this
+        /// connection runs there is no review: what it finds decides what counts as exact. Sends nothing.
         /// </summary>
         public static PowerBrakeReview Review(OdriveParameterCatalog catalog, Func<ParameterDefinition, ParameterReading> reading,
-                                              SerialStatus status, IReadOnlyDictionary<string, string> selectedInputs)
+                                              SerialStatus status, IReadOnlyDictionary<string, string> selectedInputs,
+                                              FirmwareCapabilityStatus capabilityStatus = null)
         {
+            bool checkHasEnded = capabilityStatus == null
+                || (capabilityStatus.State != FirmwareCapabilityState.Unknown && capabilityStatus.ConnectGeneration == status.ConnectGeneration);
+            var capabilities = checkHasEnded && capabilityStatus?.Capabilities?.BelongsTo(status) == true ? capabilityStatus.Capabilities : null;
+
             var group = EditableParameters(catalog);
             var errors = new List<string>();
             var changes = new List<PowerBrakeChange>();
@@ -206,6 +219,7 @@ namespace OdriveWheel.SimHubPlugin
             var replies = new Dictionary<string, string>(StringComparer.Ordinal);
             var current = new Dictionary<string, double>(StringComparer.Ordinal);
 
+            if (!checkHasEnded) errors.Add("The firmware check has not ended on this connection, review again when it has.");
             if (status.StopLatched) errors.Add("The software stop is set, press Clear stop first.");
             if (selectedInputs.Count == 0) errors.Add("Select at least one field.");
             foreach (var path in selectedInputs.Keys)
@@ -216,8 +230,8 @@ namespace OdriveWheel.SimHubPlugin
                 var shown = reading(parameter);
                 if (shown.State != ParameterReadState.Current)
                     errors.Add(parameter.Path + ": no current value, press Refresh first.");
-                else if (!OdriveConfigValue.TryParseExactReply(parameter, shown.RawValue, out double value))
-                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + "), older firmware may have rounded or cut it.");
+                else if (!OdriveConfigValue.TryParseExactReply(parameter, shown.RawValue, capabilities, out double value))
+                    errors.Add(parameter.Path + ": the current value is unclear (" + shown.Text + "). The firmware has not declared exact values on this connection, so it may be rounded or cut.");
                 else
                 {
                     replies[parameter.Path] = shown.RawValue;
@@ -263,7 +277,7 @@ namespace OdriveWheel.SimHubPlugin
                 if (errors.Count == 0) notes.AddRange(OdrivePowerBrakeRules.Notes(final, changes.Select(c => c.Parameter.Path)));
             }
 
-            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop);
+            return new PowerBrakeReview(errors, ordered ?? changes, unchanged, notes, replies, group, status.ConnectGeneration, status.LastStop, capabilityStatus);
         }
     }
 }

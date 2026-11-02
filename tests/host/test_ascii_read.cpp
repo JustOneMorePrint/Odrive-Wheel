@@ -150,6 +150,8 @@ using namespace fibre;
 
 #undef snprintf
 
+#include "../../Odrive-Wheel/src/firmware_capabilities.c"
+
 // ---- Helpers -----------------------------------------------------------------------------------
 
 #define CHECK_TEXT(actual, expected)                                                      \
@@ -389,6 +391,51 @@ static void test_error_answers_stay_as_they_are() {
     CHECK_TEXT(answer("r unsupported", true), with_checksum("not implemented"));
 }
 
+// A client stops doubting replies because of sys.capabilities?, so what it declares has to be what this
+// path does. If either flag ever stops holding, this fails, and the declaration has to change with it.
+static void test_the_declared_capabilities_hold_for_this_formatting() {
+    char declared[64];
+    CHECK(firmware_capabilities_cmd(0, CMD_TYPE_GET, nullptr, declared, sizeof(declared)) == 0);
+    CHECK_TEXT(declared, "v=1 ascii_full=1 float32_rt=1");
+
+    // ascii_full: the longest value of every kind arrives whole, with its line end.
+    check_answer("r u64_max", "18446744073709551615");
+    check_answer("r i64_min", "-9223372036854775808");
+    check_answer("r i32_min", "-2147483648");
+    check_answer("r u32_max", "4294967295");
+    check_answer("r serial", "281474976710655");
+    check_answer("r longest_float", "-1.17549435e-38");
+
+    // float32_rt: through the read a client uses, not only through the formatter. Includes the values that
+    // look like older firmware and made the plugin refuse them.
+    const float saved = test_values.small;
+    int failed = 0;
+    const auto try_bits = [&](uint32_t bits) {
+        if ((bits & 0x7F800000u) == 0x7F800000u) return;
+        test_values.small = float_of(bits);
+        std::string line = answer("r small", false);
+        float back = 0.0f;
+        const bool whole = line.size() > 2 && line.compare(line.size() - 2, 2, "\r\n") == 0;
+        const std::string text = whole ? line.substr(0, line.size() - 2) : line;
+        if (!whole || !from_string(text.c_str(), text.size() + 1, &back, 0) || bits_of(back) != bits) {
+            if (++failed <= 3) std::printf("  no round trip through the read for bits 0x%08lX: %s\n", static_cast<unsigned long>(bits), line.c_str());
+        }
+    };
+    for (float value : {32.012f, 0.015625f, 123.45678f, 56.12345f, 2.123456f, 1234.5625f, 0.1f, -0.09999974f, 0.0999999f})
+        try_bits(bits_of(value));
+    std::mt19937 random(20261103u);
+    for (int i = 0; i < 20000; ++i) try_bits(static_cast<uint32_t>(random()));
+    test_values.small = saved;
+    CHECK(failed == 0);
+
+    // The values named in the contract, as a client sees them.
+    test_values.small = 32.012f;
+    CHECK_TEXT(answer("r small", false), "32.012001\r\n");
+    test_values.small = 0.015625f;
+    CHECK_TEXT(answer("r small", false), "0.015625\r\n");
+    test_values.small = saved;
+}
+
 int main() {
     // Linking with -ffast-math switches this x86 process to flushing denormals to zero. The firmware
     // converts a float to double in software and is not affected.
@@ -405,5 +452,6 @@ int main() {
     test_the_named_size_holds_every_value();
     test_a_read_answers_with_the_whole_value_and_line_end();
     test_error_answers_stay_as_they_are();
+    test_the_declared_capabilities_hold_for_this_formatting();
     return TEST_RESULT();
 }
