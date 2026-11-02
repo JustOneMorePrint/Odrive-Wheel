@@ -1,9 +1,8 @@
 // The rule behind every flash operation of the firmware: none with a motor active, no arming during
-// one. Fed into the real parser as well, because the SimHub plugin and the web client recognize a
-// refusal by the reply ERR.
+// one. Fed into the real parser as well, which turns a refusal into the reply ERR.
 //
-// cmd_table.cpp and odrive_bridge.cpp need the HAL and can't be linked here. test_flash_paths.sh
-// checks by text that they use this logic in every path.
+// cmd_table.cpp needs the HAL and can't be linked here, test_flash_paths.sh checks it by text.
+// test_arm_refusal.cpp runs the bridge and the callers of Motor::arm.
 #include "../../Odrive-Wheel/src/flash_guard.c"
 #include "../../Odrive-Wheel/src/cmdparser.c"
 
@@ -206,7 +205,7 @@ static void test_replies_through_the_real_parser() {
     CHECK(flash_writes == 1);
 
     // The forms a client can send, none of them may reach the flash, and all of them read as a
-    // failure: OdriveProtocol.IsOffbFailure and the web client look for exactly this.
+    // failure. OdriveProtocol.IsOffbFailure in the plugin looks for exactly this.
     test_axes[0].armed = true;
     CHECK(feed("sys.save!") == "[sys.save!|ERR]\n");
     CHECK(feed("sys.save?") == "[sys.save?|ERR]\n");
