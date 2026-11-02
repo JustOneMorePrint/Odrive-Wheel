@@ -19,15 +19,16 @@ and mappable actions for dashboards and button-box control.
 3. [Install](#install)
 4. [First launch](#first-launch)
 5. [Panel walkthrough](#panel-walkthrough)
-6. [Property reference](#property-reference)
-7. [Mappable actions](#mappable-actions)
-8. [Profile workflow](#profile-workflow)
-9. [Save to flash](#save-to-flash)
-10. [Auto-per-game](#auto-per-game)
-11. [Update the plugin](#update-the-plugin)
-12. [Troubleshooting](#troubleshooting)
-13. [Coexistence with the HTML tool](#coexistence-with-the-html-tool)
-14. [Uninstall](#uninstall)
+6. [Configuration window](#configuration-window)
+7. [Property reference](#property-reference)
+8. [Mappable actions](#mappable-actions)
+9. [Profile workflow](#profile-workflow)
+10. [Save to flash](#save-to-flash)
+11. [Auto-per-game](#auto-per-game)
+12. [Update the plugin](#update-the-plugin)
+13. [Troubleshooting](#troubleshooting)
+14. [Coexistence with the HTML tool](#coexistence-with-the-html-tool)
+15. [Uninstall](#uninstall)
 
 ---
 
@@ -169,8 +170,9 @@ ago the last bulk read completed.
 Below the rows:
 
 - **Open configuration window** — the separate window with the status
-  values, the software stop and the Extensions tab. It runs on its own UI
-  thread, so a busy SimHub or a SimHub dialog does not block it.
+  values, the read-only ODrive tabs, the software stop and the Extensions
+  tab. It runs on its own UI thread, so a busy SimHub or a SimHub dialog does
+  not block it. See [Configuration window](#configuration-window).
 - **Release port / Take over port** — the plugin holds the COM port while
   it runs. Release it before you connect the HTML tool or start a flash from
   there. While released, profiles and actions report that the port is released.
@@ -315,6 +317,48 @@ back-to-back if the game name is stable.
 ### Footer
 
 Version, license, GitHub repo path.
+
+---
+
+## Configuration window
+
+Opened with **Open configuration window** in the panel. The connection state,
+**Release port** and **SOFTWARE STOP (IDLE)** stay at the top on every tab, and
+both keep working while values are being read: they end the read, and whatever
+it did not reach stays unread.
+
+Tabs: **Status**, **PSU / Brake**, **Axis**, **Motor**, **Encoder**,
+**Controller** and **Extensions**.
+
+**These tabs only read.** They send read commands and change nothing on the
+board. Writing values, saving, clearing errors, erasing the configuration,
+calibrations, the console and import/export are planned (Package 1b).
+
+Implemented and tested against a simulated board. **Not tested on a real board
+yet.**
+
+The **Status** tab reads the errors, the axis state, the bus voltage and the
+build id once a second. Everything else is read only when you press **Refresh
+tab** or the **Refresh** of a group.
+
+Each row shows the value, what the firmware allows (`read-only`, `writable`, or
+`calibration` for a value set by a calibration) and the time of the read. A row
+can also say:
+
+| Text | Meaning |
+|---|---|
+| `—` | Not read on this connection. |
+| `outdated (was …)` | Read before the connection changed. The board may have rebooted, press **Refresh**. |
+| `not supported by this firmware (…)` | The running firmware does not have this parameter. |
+| `not readable (…)` | The firmware refused the read. |
+| `no reply` | No answer in time. Two in a row end the read. |
+| `unexpected reply (…)` | The answer is not a value of the expected type. |
+| `… (may be cut off)` | See below. |
+
+An ODrive read returns **at most 9 characters**, and the firmware cuts longer
+numbers without saying so. A number that fills all 9 may therefore be wrong: it
+is marked, and error bits are not decoded in that case. With a decimal point in
+the reply only decimals are lost, so `100.00000` means 100.
 
 ---
 

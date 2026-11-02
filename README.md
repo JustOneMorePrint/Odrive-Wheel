@@ -10,8 +10,8 @@ full **HID Force Feedback** support to use the motor as a sim racing wheel.
 </p>
 
 > **How this fork is operated:** configuration happens in the SimHub plugin.
-> The full ODrive editor, the FFB tabs, the setup wizard and the DFU flasher
-> are planned there and not available yet
+> Its window can read the ODrive parameters so far. Editing them, the FFB tabs,
+> the setup wizard and the DFU flasher are planned there and not available yet
 > ([Package 1, steps 1b–1e](docs/packages/PKG1.md)). The HTML tool
 > `Odrive-Wheel/tools/odrive-wheel.html` stays in the repo as a reference and is
 > no longer developed. GitHub Pages is not part of this project.
