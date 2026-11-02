@@ -57,11 +57,25 @@ The window always shows which of these a value is in. There is no single "saved"
 | Sent | The line went out | The worker, a write has no positive answer |
 | In RAM, verified | The board reports that value | Readback compared by type |
 | In RAM, unclear | It may or may not be there | The readback failed or was refused |
-| Saved | In flash | Read again after the save and its reboot, and equal to what was saved |
-| Saved, unconfirmed | A save was sent, nothing read since | The default right after sending |
+| Save reported | FFB store only: the firmware says it worked | `sys.save!` answered `OK`, which it does only without write errors. No read after a reboot yet |
+| Save sent, unconfirmed | ODrive store only: the line went out | `ss` has no answer |
+| Save failed | Not saved, the store may hold a part of it | `sys.save!` answered `ERR`, with the counts in `sys.savestat?`, or the values differ after a reboot |
+| Saved | In flash | Read again after a reboot, and equal to what was saved |
 
-ODrive values and FFB values have separate stores with separate saves (`ss` for S10+S11, `sys.save!` for S1+S2). A
-report names both. Values in RAM that differ from the saved ones are marked until a reboot or a save.
+**Only the last state is shown as permanently saved.** A failed or unconfirmed save never confirms a change as permanent. The changed values stay
+marked as in RAM, nothing is retried on its own, and after a failure what the store holds is unclear until it was read after a reboot.
+
+**The two stores are separate**, each with its own state. The success of one says nothing about the other.
+
+| | ODrive store | FFB store |
+|---|---|---|
+| Flash | S10+S11 | S1+S2 |
+| Save | `ss` | `sys.save!` |
+| Answer | None | `OK` or `ERR`, with counters in `sys.savestat?` |
+| Refused | While a motor is armed `ss` does nothing, without an answer | With a motor active, `ERR` from S1 |
+| Afterwards | A reboot, **also if the store failed**, so a reboot confirms nothing (`ODrive::save_configuration`) | No reboot |
+
+A report names both. Values in RAM that differ from the saved ones are marked until a reboot or a save.
 
 ## Who decides
 
@@ -70,7 +84,7 @@ never the only barrier: another command source, a crash or a lost USB link must 
 
 | Protection | Final decision today | Planned |
 |---|---|---|
-| Flash operation with an active motor, arming during a flash operation | Firmware (S1) | – |
+| Flash access by the running firmware with an active motor, arming during a flash operation | Firmware (S1) | – |
 | Over and under voltage, over current, thermal limits, deadline misses | Firmware (ODrive) | – |
 | Motor limits (`current_lim`, `torque_lim`) | Firmware | – |
 | Zero torque on USB unmount | Firmware (`ffb_on_usb_unmount`) | – |
@@ -79,6 +93,7 @@ never the only barrier: another command source, a crash or a lost USB link must 
 | Relations of Power / Brake values | Plugin review, the firmware stops afterwards if they are broken | Firmware refusal where a wrong value can do harm |
 | Endstop priority, HID timeout, watchdog | Not yet | Package 3, protection step |
 | Firmware fits the selected board | Not yet | Board identity and flasher, see `docs/HARDWARE.md` |
+| Protected sectors when flashing through DFU | Not yet | The flasher of 1e excludes them itself, and is the barrier here: S1 only guards the running firmware, which is not running during DFU |
 
 Hands-off detection is no protection. It may reduce discomfort, and nothing relies on it.
 
@@ -92,7 +107,7 @@ are no further heuristics to guess what a firmware can do. What the firmware doe
 | Read and display | A connection. Without a declaration long numbers stay marked |
 | Backup and comparison | `ascii_full=1 float32_rt=1`, or the file says that values are uncertain |
 | Write to RAM, new functions | `ascii_full=1 float32_rt=1`, latch clear, axes idle, readback |
-| Write to RAM, Power / Brake of PR #7 | As above, or its careful path for values that look exact. Not extended, and open for removal, see `docs/ROADMAP.md` |
+| Write to RAM, Power / Brake of PR #7 | As above, or today still its fallback for values that look exact. Decided: the fallback goes with the next extension of the writing editor, `docs/ROADMAP.md` |
 | Save to flash | The above, and the firmware's flash guard |
 | Calibration and anything that moves the motor | The above, the board matches, a current backup exists, explicit confirmation in the window |
 | Flash firmware | Board identity on the image and on the board, protected sectors (rule 12 in `CLAUDE.md`) |

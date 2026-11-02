@@ -32,6 +32,9 @@ upstream, Simucube, Fanatec, Moza and the literature. Benefits named there are n
 - Calibrations for old and new variants can both be kept (slots A/B of package 6), each traceable to hardware and version.
 - Telemetry effects through SimHub stay parked, see the backlog.
 - Hardware tests are deferred at the user's request, and stay visibly open in `docs/TESTING.md`.
+- **Binding:** the write fallback without a capability declaration (Power / Brake, PR #7) is removed with the next extension of the writing editor.
+  Until then the code stays as it is, and the fallback is not extended.
+- **Binding:** endstop priority and soft start have no old/new switch. Sensible settings stay possible.
 
 ## Order of development
 
@@ -75,9 +78,10 @@ No write of any kind to the board.
 | Function | Package | Depends on | Switch |
 |---|---|---|---|
 | Board selection and identity in the firmware | 1e, new | Foundations | None |
-| DFU flasher with this fork as source, backup first, protected sectors, release workflow | 1e | Board identity, first backup, S1 | None |
+| DFU flasher with this fork as source, backup first, excluding the protected sectors itself, release workflow | 1e | Board identity, first backup | None |
 | Builds for XDrive S and XDrive, as the comparison in `docs/HARDWARE.md` allows | new | Board identity | None |
 | Editing all other parameters, value states, save, clear errors, erase with confirmation, state changes | 1b | First backup, shared operation | None |
+| Removal of the write fallback without a declaration, in the same step as the next editor extension | 1b | – | None |
 | Console | 1b | Connection | None |
 | Power input range 24–48 V, brake resistor (0, 20] Ω or disabled | new | Editor | Setting |
 | Setup wizard, in the order of `docs/HARDWARE.md` | 1d | Editor, state changes, board identity | None |
@@ -85,11 +89,12 @@ No write of any kind to the board.
 | Torque over speed calculator, bandwidth and feedforward advice | 1d | Motor data | None |
 | Guided checks: force direction, regeneration | new, from the FFBeast comparison | Wizard | None |
 | Resolver connection (hardware only: AD2S1210 on ABZ, or magnet with MT6835) | 1 | – | – |
-| Protection: endstop priority, soft start | 3 | – | None |
+| Protection: endstop priority. Not scaled with `fxratio`, not clipped together with game forces | 3 | – | None, settings possible |
+| Protection: soft start on arming, on finding the index and on zeroing | 3 | – | None, settings possible |
 | Protection: speed limit, out of bounds | 3 | – | Setting |
-| Protection: watchdog, HID timeout | 3 | – | None |
-| Protection: E-stop input, status output | 3 | Wiring | Setting |
-| Protection: supply limiter | 3 | Power supply data | Setting |
+| Protection: watchdog (feeding the ODrive axis watchdog), HID timeout | 3 | – | None |
+| Protection: E-stop input, status output, so the ESP can switch off cleanly | 3 | Wiring | Setting |
+| Protection: supply limiter, instead of a disarm at `dc_max_positive_current` | 3 | Power supply data | Setting |
 | Protection: I²t model | 3 | Thermal data of the motor, off without it | Setting |
 | Protection: firmware side of the stop latch, refusal of values that must not change while armed (`docs/FOUNDATIONS.md`) | 3, new | – | None |
 | Mutex between USB callback and FFB thread | 4, brought forward | – | None |
@@ -143,7 +148,7 @@ a variant.
 | Harmonic compensation | 6 | Ripple measurement | Yes |
 | Bidirectional anticogging in slot B (3600 floats) | 6 | Slot store, ripple measurement | Yes |
 | Phase offset in slot B, switching only while disarmed | 6 | Slot store | Yes |
-| Slot store in sector 9, linker change | 6 | Calibration records | None |
+| Slot store in sector 9, linker change (FLASH 720K → 592K, a new region) | 6 | Calibration records | None |
 | Calibration assistant, `enc.*` | 6 | Wizard | None |
 | State observer in the control loop, with Iq·Kt as input | 7 | Measured J and b or entered ones, M4, M5 | Yes |
 | J and b as parameters, `obs.*` | 7 | – | Setting |
@@ -159,7 +164,8 @@ Only what cannot work otherwise. Everything also builds on `docs/FOUNDATIONS.md`
 - **Anything that changes the setup** needs the first backup.
 - **The wizard** needs the editor, state changes and the board identity. Calibration that moves the motor also needs a backup and a
   confirmation.
-- **The flasher** needs the board identity, and S1 for what it must not touch.
+- **The flasher** needs the board identity. It has to exclude the protected sectors itself: S1 guards flash access by the running firmware and does
+  not apply during DFU.
 - **Restore** needs the editor and value states, and refuses a backup of another board.
 - **The supply limiter** needs power supply data, **I²t** needs thermal data of the motor. Without the data they stay off.
 - **Test forces** need the protection step.
@@ -189,7 +195,7 @@ Where a package's firmware part changes: `haptics_core.*` (3), `Filters.*`, `EqC
 
 ## S1 – Flash-Schutz in der Firmware
 
-A protection without a switch, part of stage 0.
+A protection without a switch, part of stage 0. It guards flash access by the running firmware. DFU flashing is outside of it, see 1e in `docs/packages/PKG1.md`.
 
 Beim Schreiben oder Löschen steht die CPU, weil sie ihren Code aus demselben Flash holt, und mit ihr
 der Regel-Interrupt. Die PWM bleibt dann auf dem letzten Wert, und niemand regelt den Strom. Deshalb:
@@ -303,4 +309,5 @@ ob `%.9g` in newlib-nano dieselben Texte liefert und ob die Werte dort wirklich 
 - **Left over:** `fx.master` is stored at `0x04F0`, but the address is missing from `VirtAddVarTab`, so it is lost at a page transfer. A small PR
   of its own, after asking.
 - **Left over:** `docs/TORQUE_CONTROL.md` gives current bandwidths in Hz, the parameter is rad/s.
-- **Left over:** `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, which looks like a reading.
+- **Left over:** `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, the same as a real 0 °C.
+- **Left over:** the comment in `Odrive-Wheel/Makefile` says "OVP trip = 59.92V". The trip level defaults to 30 V, 59.92 V is the default of the ramp.
