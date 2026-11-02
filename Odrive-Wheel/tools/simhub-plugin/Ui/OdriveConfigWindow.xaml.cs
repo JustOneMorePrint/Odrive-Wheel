@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -14,8 +15,6 @@ namespace OdriveWheel.SimHubPlugin
     /// </summary>
     public partial class OdriveConfigWindow : Window
     {
-        private const string StatusTab = "status";
-
         private static readonly Brush BrushOk      = Frozen(0x2A, 0x9D, 0x8F);
         private static readonly Brush BrushWarn    = Frozen(0xE9, 0xC4, 0x6A);
         private static readonly Brush BrushDanger  = Frozen(0xE7, 0x6F, 0x51);
@@ -27,10 +26,10 @@ namespace OdriveWheel.SimHubPlugin
         private readonly Func<int?> _hidAxisState;
         private readonly Action<string> _log;
 
-        private readonly List<ParameterDefinition> _statusParameters;
-        private readonly Dictionary<string, TextBlock> _statusValues = new Dictionary<string, TextBlock>();
+        private readonly List<ParameterDefinition> _polledParameters;
         private readonly DispatcherTimer _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         private readonly DispatcherTimer _pollTimer   = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        private readonly CancellationTokenSource _closing = new CancellationTokenSource();
 
         private bool _polling;
         private bool _closed;
@@ -45,10 +44,14 @@ namespace OdriveWheel.SimHubPlugin
             _parameters   = parameters;
             _hidAxisState = hidAxisState ?? (() => null);
             _log          = log ?? (_ => { });
-            _statusParameters = catalog.InTab(StatusTab).ToList();
+            _reader       = new OdriveParameterReader(
+                (parameter, priority, cancellation) => _parameters.ReadAsync(parameter.Path, parameter.Protocol, priority, cancellation),
+                _serial.GetStatus,
+                () => _serial.StopToken);
+            _polledParameters = catalog.Parameters.Where(p => p.Polled).ToList();
 
             StopDisclaimerText.Text = OdriveStatusText.StopDisclaimer;
-            BuildStatusTab();
+            BuildParameterTabs(catalog);
             BuildExtensionsTab(featurePanels ?? FeaturePanels.All);
             UpdateStatus();
 
@@ -60,16 +63,18 @@ namespace OdriveWheel.SimHubPlugin
                 _pollTimer.Start();
                 PollStatusValues();
             };
-            Closed += (s, e) =>
-            {
-                _closed = true;
-                _statusTimer.Stop();
-                _pollTimer.Stop();
-            };
+            Closed += (s, e) => EndWork();
+            // The host can end the thread without closing the window first.
+            Dispatcher.ShutdownStarted += (s, e) => EndWork();
         }
 
-        /// <summary>The text shown for a status parameter, for tests.</summary>
-        internal string DisplayedValue(string path) => _statusValues[path].Text;
+        private void EndWork()
+        {
+            _closed = true;
+            _closing.Cancel();
+            _statusTimer.Stop();
+            _pollTimer.Stop();
+        }
 
         // ---- Buttons ---------------------------------------------------------
 
@@ -114,26 +119,20 @@ namespace OdriveWheel.SimHubPlugin
             StopStatusText.Text       = stop.Text;
             StopStatusText.Foreground = TextBrush(stop.Severity);
             ClearStopButton.Visibility = status.StopLatched ? Visibility.Visible : Visibility.Collapsed;
+
+            UpdateParameterRows(status);
         }
 
+        // Only the fixed list of status values, everything else is read on request.
         private async void PollStatusValues()
         {
             if (_polling || _closed) return;
-            if (!_serial.GetStatus().IsConnected)
-            {
-                foreach (var value in _statusValues.Values) value.Text = "—";
-                return;
-            }
+            if (!_serial.GetStatus().IsConnected) return;
 
             _polling = true;
             try
             {
-                foreach (var parameter in _statusParameters)
-                {
-                    var result = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Background);
-                    if (_closed) return;
-                    _statusValues[parameter.Path].Text = OdriveStatusText.ReadValue(parameter, result);
-                }
+                await _reader.RefreshAsync(_polledParameters, CommandPriority.Background, _closing.Token);
             }
             catch (Exception ex)
             {
@@ -146,52 +145,6 @@ namespace OdriveWheel.SimHubPlugin
         }
 
         // ---- Building the tabs -----------------------------------------------
-
-        private void BuildStatusTab()
-        {
-            foreach (var group in _statusParameters.GroupBy(p => p.Group))
-            {
-                StatusStack.Children.Add(new TextBlock
-                {
-                    Text  = group.Key,
-                    Style = (Style)FindResource("H2"),
-                });
-
-                var grid = new Grid();
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-                int row = 0;
-                foreach (var parameter in group)
-                {
-                    grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                    var label = new TextBlock
-                    {
-                        Text       = parameter.Path,
-                        FontFamily = new FontFamily("Consolas"),
-                        Margin     = new Thickness(0, 3, 8, 3),
-                        ToolTip    = parameter.Description,
-                    };
-                    Grid.SetRow(label, row);
-                    grid.Children.Add(label);
-
-                    var value = new TextBlock
-                    {
-                        Text   = "—",
-                        Style  = (Style)FindResource("LiveValue"),
-                        Margin = new Thickness(0, 3, 0, 3),
-                    };
-                    Grid.SetRow(value, row);
-                    Grid.SetColumn(value, 1);
-                    grid.Children.Add(value);
-                    _statusValues[parameter.Path] = value;
-
-                    row++;
-                }
-                StatusStack.Children.Add(grid);
-            }
-        }
 
         private void BuildExtensionsTab(IReadOnlyList<Func<IFeaturePanel>> featurePanels)
         {
