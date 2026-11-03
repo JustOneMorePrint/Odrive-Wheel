@@ -9,7 +9,7 @@ add to it, and then everyone gets the addition. Planning is in `docs/ROADMAP.md`
 |---|---|---|
 | One owner of the port | `Core/OdriveSerialService.cs` | One worker thread, one command on the wire, priorities, resync after a timeout, the software stop ahead of everything |
 | Reading and writing | `Core/OdriveParameterService.cs` | Both dialects, results that say how far a line got |
-| Operation binding | `SerialOperationContext` in `Core/OdriveSerialTypes.cs` | A command goes out only while its connection and stop state still hold, checked by the worker right before the line. `ForReading` also accepts a finished stop with its latch set, and lets nothing but reads through |
+| Operation binding | `SerialOperationContext` in `Core/OdriveSerialTypes.cs` | A command goes out only while its connection and stop state still hold, checked by the worker right before the line. `ForReading` also accepts a finished stop with its latch set, and lets nothing through but reads known to change nothing |
 | Firmware capabilities | `Core/OdriveFirmwareCapabilities.cs`, `sys.capabilities?` | What the firmware of this connection declares, contract in `docs/packages/PKG1.md` |
 | First operation built on it | `Core/OdriveRamApply.cs` | Review, fresh check, write, readback, for Power / Brake |
 | A reading operation on it | `Core/OdriveCatalogSnapshot.cs` | The catalog snapshot: every catalog path once, bound to one connection, stop state and capability state, `docs/packages/PKG1.md` |

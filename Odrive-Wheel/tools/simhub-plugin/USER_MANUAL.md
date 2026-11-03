@@ -471,9 +471,11 @@ plugin settings, the anticogging map and `axis1`.
      filled in from earlier reads.
    With a finished software stop and its latch set, a capture still works: it only
    reads. It never clears the latch, and what the latch blocks stays blocked.
-3. **Precision** follows **Firmware replies**: with `declared complete and exact`
-   every ODrive reply is the value on the board. Without it, floats may be rounded
-   and numbers of 9 or more characters may be cut off, and the snapshot says so.
+3. **Precision** is said per value. With **Firmware replies** at `declared complete
+   and exact` every ODrive reply is the value on the board. Without it, floats may be
+   rounded and numbers of 9 or more characters may be cut off. `axis.maxtorque` is never
+   exact: its OpenFFBoard command writes two decimals, the declaration does not cover it.
+   The summary names the values that are not exact, the metadata lists each with why.
 
 **Export snapshot…** writes two files next to each other and never replaces one:
 
@@ -512,6 +514,11 @@ and error bits compare as whole numbers of any length. Booleans take `0`, `1` an
 file of the web client or a values file that was changed, a file's floats count as
 not proven. A file that is no JSON object, has a key twice, is not UTF-8 or is too
 large is refused with the reason.
+
+Writing, reading and comparing files run in the background: the stop button and
+**Release port** keep working meanwhile, and a result that comes after a newer attempt
+is not shown. A new comparison clears the earlier one, so a report never carries a
+comparison of an attempt before.
 
 **Write diagnostic report…** writes a short Markdown file for an issue: build,
 declaration, the scope of the snapshot, errors in clear text, axis state, bus voltage,

@@ -281,12 +281,16 @@ and power supply data, the anticogging map, `axis1`, the flash contents.
 firmware check, and each request carries them:
 
 - `SerialOperationContext.ForReading`: the worker refuses the line if the connection changed, a new stop came, or the latch
-  changed in either direction. Only read lines (`r <path>`, `<path>?`) pass with it, so the latch it tolerates opens no write.
+  changed in either direction. Only reads known to change nothing pass with it (`OdriveProtocol.IsHarmlessRead`): an ODrive
+  `r <path>`, which reads one property (`cmd_read_property`), and the get of `sys.build`, `sys.vbusdiv`, `axis.maxtorque` and
+  `fx.master`. A `?` alone proves nothing: the handler runs, and `sys.save?`, `sys.eetest?`, `sys.eedump?` and `sys.eeformat?`
+  reach the flash that way. The four are held against their handlers in `cmd_table.cpp` by a test, a new one needs the same.
 - The `Superseded` token of the firmware check is linked to every request.
 - A finished stop with its latch set is a stop state like any other. A capture reads then, it never clears the latch, and the
   command guard stays as it is. A running stop prevents the start, and so does a firmware check that has not ended.
-- A reply counts only if the state still holds when it is here. Before the snapshot is called finished the state is looked at
-  once more: a change after the last reply makes it partial as well.
+- A reply counts only if the state still holds, and the capture is not cancelled, when it is here. Before the snapshot is called
+  finished both are looked at once more: a change or a cancel after the last reply makes it partial as well. Stop, connection
+  and firmware check come before the cancel as the reason.
 - Results: complete, complete with failed values (not supported, refused, no reply, unexpected reply, each named), partial (with
   the reason). Two timeouts in a row end it. There is no retry, and nothing is taken from earlier reads or the reader cache.
 
@@ -297,21 +301,23 @@ only, replies as they came. `odrive_config_<time>.meta.json` next to it, `_type`
 |---|---|
 | `values_file` | Name, SHA-256, size and number of entries of the values file. The binding: other content, other hash |
 | `completeness`, `abort_reason` | As above |
-| `values_exact`, `capabilities` | The declaration as the firmware sent it, its flags, or why there was none |
+| `precision`, `capabilities` | Whether every value read is exact, what the declaration covers (the ODrive replies), the number of values that are not exact; the declaration as the firmware sent it, its flags, or why there was none |
 | `capture` | Start and end in UTC, the source (RAM, serial), `simultaneous: false`, port, connection |
 | `stop` | Whether the latch was set, how the last stop ended |
 | `firmware`, `catalog` | `sys.build` as read; catalog version, SHA-256 and counts |
-| `not_included`, `failed`, `uncertain` | What is not in it, each path without a value and why, each value that may be rounded or cut off |
+| `not_included`, `failed`, `uncertain` | What is not in it, each path without a value and why, each value that may be rounded or cut off with its reason. `axis.maxtorque` is always among them: its handler prints two decimals |
 | `status_values` | The status section, replies as they came |
 
 The export refuses to replace a file. It writes both to temporary files, reads them back, moves them into place and loads them
 again as any file is loaded. Only a load that finds the metadata matching and the values as captured counts as success, otherwise
-whatever it wrote is removed again. A partial snapshot has `_partial` in its names.
+whatever it created is removed again, and only that: a file that appears in its way is left alone. A partial snapshot has
+`_partial` in its names.
 
 **Loading.** A file is data. It must be one UTF-8 JSON object of at most 4 MB, without a key twice and without anything after it;
 values stay strings, no date or number conversion. Values that are no string are named and left out. The metadata counts only if
-its hash is that of the values file, its version is known and its flags fit its declaration. Otherwise, and without metadata, the
-values can be compared but their precision is not proven, and the metadata's status values are not used. Choosing the metadata file
+its hash is that of the values file, its version is known and its flags fit its declaration. Any other shape, a version of any size
+or a field of the wrong kind included, gives a state and a reason, never an exception. Otherwise, and without metadata, the values
+can be compared but their precision is not proven, and the metadata's status values are not used. Choosing the metadata file
 leads only to a plain file name next to it.
 
 **Comparison** (`Core/OdriveSnapshotComparison.cs`), board against a file or two files. The board side is always a new capture,
@@ -320,8 +326,9 @@ through the catalog paths only, so a file key never reaches the board. Two files
 - Floats are float32. They compare by value only where both replies are exact, so `32.012` and `32.012001` are the same with a
   declaration on both sides. +0 and -0 are the same value, two NaN are the same (no payload is compared), `inf` and `-inf` differ
   from each other and from every number. Non-finite replies are exact without a declaration as well.
-- Integers, bitmasks, enums and axis states compare as whole numbers of any size, nothing goes through a double. A reply of older
-  firmware that may be cut is a prefix of the whole number, which decides some cases.
+- Integers, bitmasks, enums and axis states compare as whole numbers of any size, nothing goes through a double. A reply that may
+  be cut is the start of the whole number: two such replies, or one and an exact one, can be the same value where one starts with
+  the other (`214748364` and `2147483647`), and differ only where neither does.
 - Booleans take `0` and `1`, and `True`/`False` of older web client files. Text compares as text.
 - Where a side is not exact, equal text is `same text` only. Different text is `DIFFERS` only where no rounding by the last digit
   shown, and no cutting, can explain it, otherwise `unclear`.
@@ -332,6 +339,9 @@ version as reported with the note that it identifies no board, the declaration, 
 the trip levels as settings, temperatures with their limits and the error at upper + 5 °C, failed reads, differences from the last
 compared file. The known limits of the temperature readings are next to the values: 0 is ambiguous, a disabled sensor is still
 evaluated, the firmware cannot tell a missing sensor.
+
+**In the window** file access, parsing and comparing run off the window's thread, so the stop and port buttons stay usable while
+they run. A new comparison clears the earlier one, also for the report, and a late result of an earlier attempt is not shown.
 
 **Limits:**
 
