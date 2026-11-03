@@ -1,17 +1,19 @@
 # CLAUDE.md – Arbeitsregeln für dieses Repository
 
 Diese Datei liest Claude Code zu Beginn jeder Sitzung. Sie gilt für alle Arbeiten
-in diesem Fork. Details zu den geplanten Paketen stehen in `docs/ROADMAP.md`,
+in diesem Fork. Planning is in `docs/ROADMAP.md`, the shared contract in `docs/FOUNDATIONS.md`,
 das Testvorgehen in `docs/TESTING.md`.
 
 ## Kontext
 
+- Product goal: a DIY direct drive for hoverboard and industrial servo motors, operated entirely through the
+  English SimHub plugin. Reliable function, reproducible setup, low measured latency, understandable diagnosis.
 - Fork von `eagabriel/Odrive-Wheel`: ODrive-Firmware 0.5.6 (Motorregelung) plus
-  OpenFFBoard-FFB-Stack auf STM32F405 (MKS XDrive Mini, ODESC V4.2, ODrive-v3.6-Klone).
+  OpenFFBoard-FFB-Stack auf STM32F405.
+- Target boards: MKS XDrive Mini, MKS XDrive S, MKS XDrive. What is planned and what is checked for each: `docs/HARDWARE.md`.
 - Zielhardware des Nutzers: DIY-Direct-Drive-Basis (bis 25 Nm) mit KUKA-Servomotor
   an 48 V, Bremswiderstand, ESP32 schaltet die Versorgung per Relais.
-- Wir erweitern Firmware und SimHub-Plugin in **sieben voneinander unabhängigen
-  Paketen** (siehe `docs/ROADMAP.md`).
+- Packages keep their numbers, the order follows the user's flows: `docs/ROADMAP.md`.
 - Der Web-Client `Odrive-Wheel/tools/odrive-wheel.html` wird durch das SimHub-Plugin
   ersetzt. Er bleibt im Repo, wird aber **nicht mehr geändert**. GitHub Pages gehört nicht
   zum Projektbetrieb.
@@ -19,6 +21,7 @@ das Testvorgehen in `docs/TESTING.md`.
 - Testhardware des Nutzers: **MKS XDrive Mini** (VBUS-Teiler 19, Default der Firmware).
 - Die Alt/Neu-Schalter neuer Features gelten **global**. Sie sind nicht Teil der
   Plugin-Profile und werden beim Anwenden eines Profils nicht verändert.
+- Hardware tests are deferred at the user's request and stay listed as open in `docs/TESTING.md`.
 
 ## Repo-Karte
 
@@ -33,12 +36,12 @@ das Testvorgehen in `docs/TESTING.md`.
 
 ## Harte Regeln
 
-1. **Jedes Feature hat einen Schalter, Default = altes Verhalten.** Mit allen Schaltern
-   eines Pakets auf „aus“ muss das Verhalten identisch zum Stand vor dem Paket sein.
-   Ausnahmen nur für reine Robustheits-Fixes ohne spürbare Änderung; im PR begründen.
-2. **Pakete sind unabhängig.** Kein Paket setzt Code eines anderen Pakets voraus.
-   Optionale Verzahnungen bringt das später umgesetzte Paket mit, mit eigenem Schalter.
-   Dafür werden gemeinsame Dateien bewusst mehrfach angefasst.
+1. **Switches only for real variants.** An old/new switch exists where a comparison or a tuning variant makes sense, with
+   the old behaviour as default. Safety and robustness corrections always apply, the PR gives the reason. A value that depends on the
+   hardware is a setting, no switch. Calibrations stay traceable to hardware and version (`docs/FOUNDATIONS.md`).
+2. **Shared foundations.** Connection, stop, firmware capabilities, abort, partial changes and unclear results follow
+   `docs/FOUNDATIONS.md`, no function brings its own rules. Real dependencies between packages are listed in `docs/ROADMAP.md`,
+   and a package does not need more than those.
 3. **ODrive-Konfigurationsstrukturen nicht ändern.** Keine Änderungen an `Config_t`
    in `motor.hpp`, `controller.hpp`, `encoder.hpp`, `axis.hpp`, an den Board-/ODrive-Configs
    und an `odrive-interface.yaml`. Grund: ODrive speichert die Config als Binärblock mit
@@ -77,20 +80,45 @@ das Testvorgehen in `docs/TESTING.md`.
 12. **Flashen per Software:** Jeder DFU-Code (Web-Client, Plugin) darf die Sektoren
     S1+S2 (FFB-EEPROM), S9 (Slot-Speicher, reserviert) und S10+S11 (ODrive-NVM) weder
     löschen noch beschreiben.
+13. **Protection is decided in the firmware.** The plugin explains and refuses early, and it is never the only barrier for
+    something that can do harm. Where that is not so yet, `docs/FOUNDATIONS.md` says so. Hands-off detection is no protection.
+14. **Minimum capabilities.** A write function needs what `docs/FOUNDATIONS.md` lists. There are no new heuristics to guess what an
+    older firmware can do. No motor limit is invented: without the motor's data the field stays empty and what needs it stays off.
+15. **Measured claims.** A benefit counts when it is measured with a metric from `docs/MEASUREMENT.md`, before and after. Otherwise
+    it is called a hypothesis.
 
-## Workflow pro Paket
+## How a task works
 
-1. Vor dem Start: Paketbeschreibung in `docs/ROADMAP.md` und, falls vorhanden, die
-   Spezifikation `docs/packages/PKGn.md` lesen. Plan kurz mit dem Nutzer abstimmen
-   (Dateien, neue Befehle, EEPROM-Adressen, offene Fragen). Große Pakete werden in
-   Teilschritte mit je eigenem Branch und PR zerlegt (`pkg/1a-...`).
-2. Branch `pkg/<n>-<kurzname>` vom aktuellen `main` dieses Forks.
+Standing rules are here and are not repeated in a task. A task states four things:
+
+- **User goal:** what the user can do afterwards.
+- **Scope:** what is in it, and what is left out.
+- **State contract:** which states can change during it (connection, stop, capabilities, values), and what happens then.
+- **Acceptance:** what shows that it is done.
+
+Then:
+
+1. Read the part of `docs/ROADMAP.md` and any specification the task touches. Implement directly if the task is clear, large ones in
+   parts with a branch and PR each.
+2. Branch from the current `main` of this fork: `pkg/<n>-<kurzname>`, `fix/…`, `docs/…`.
 3. Kleine Commits, Conventional Commits auf Englisch, z. B. `feat(pkg3): add endstop priority switch`.
-4. Firmware und Plugin bauen; keine neuen Warnungen.
-5. Testanleitung nach `docs/TESTING.md` in die PR-Beschreibung schreiben.
+4. Build what the change touches, no new warnings. A pure documentation change needs no build.
+5. Choose tests by failure cases and state transitions (`docs/TESTING.md`). A correction shows its regression red first.
 6. PR **gegen `main` dieses Forks**, nicht gegen eagabriel:
-   `gh pr create --repo JustOneMorePrint/Odrive-Wheel --base main`
-7. Nach dem Merge: Status in `docs/ROADMAP.md` aktualisieren.
+   `gh pr create --repo JustOneMorePrint/Odrive-Wheel --base main`. Test instructions for the user go into the description.
+7. The full final report is an English comment on the PR: head and base, what was done and left out, decisions, tests, builds, CI
+   links, limits, open hardware tests. Update that comment after corrections. The chat message says PR link, head and CI status, and
+   anything that is wrong or risky.
+8. Auto-fix applies to the PR it was turned on for, and ends with it. Claude does not merge.
+9. After the merge: update the status in `docs/ROADMAP.md` and the open tests in `docs/TESTING.md`.
+
+**Handover after a finished PR.** A few lines are enough for a new session:
+
+```text
+main at <hash>, merged PR #<n>: <one line>.
+Open hardware tests: docs/TESTING.md.
+Next task: <goal, scope, state contract, acceptance>.
+```
 
 ## Build
 

@@ -2,8 +2,10 @@
 
 Ziel: Das SimHub-Plugin übernimmt alle Funktionen des Web-Clients außer den
 Analyse-Werkzeugen (Performance-Test, Sweep, Live-Plots, FFT, Overlay, Force-Test),
-die in Paket 2 folgen. No firmware changes in this package, except the read-only
-`sys.capabilities?`.
+die in Paket 2 folgen.
+
+**Firmware in this package.** Mostly this is plugin work. Implemented in the firmware: the read-only `sys.capabilities?`. Planned: a board
+identity, and the builds for further boards (`docs/HARDWARE.md`).
 
 Die Konfiguration erfolgt ausschließlich über das SimHub-Plugin. Der Web-Client bleibt nur
 als lesbare Referenz im Repository und wird nicht weiterentwickelt, GitHub Pages gehört
@@ -13,7 +15,7 @@ nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die 
 **Status:** 1a is in `main`, its hardware tests are open. Of 1b, the read-only tabs, the power supply
 data, the editing of Power / Brake to RAM and the firmware capability check are implemented and not
 checked on the board ([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin
-does not have those functions yet. The capability check is the one firmware change of this package, see
+does not have those functions yet. The capability check is the only firmware change of this package so far, see
 [Firmware capabilities](#firmware-capabilities).
 
 ## Architektur
@@ -58,8 +60,8 @@ does not have those functions yet. The capability check is the one firmware chan
 
 ## Teilschritte
 
-Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die Basis,
-1b–1e bauen darauf auf und sind untereinander unabhängig.
+Each step is a branch and PR of its own (`pkg/1a-...` and so on). The order and the real dependencies are in
+`docs/ROADMAP.md`: parts of these steps now fall into different stages, the export for instance comes before all else that is left of 1b.
 
 | Teilschritt | Inhalt | Test durch den Nutzer |
 |---|---|---|
@@ -79,7 +81,8 @@ Jeder Teilschritt ist ein eigener Branch (`pkg/1a-...` usw.) und PR. 1a ist die 
 | Editing the ten `config.*` fields of Power / Brake, to RAM only | yes, tested against the simulated board | no |
 | `sys.capabilities?` in the firmware, and its use in the plugin | yes, on the PC: real parser and formatting, simulated board | no |
 | Editing anything else, saving (`ss`) from the editor, clearing errors, erasing the config, state changes and calibrations | planned | – |
-| Console, export/import | planned | – |
+| Export, comparison, diagnostic report | planned next, stage 1 in `docs/ROADMAP.md` | – |
+| Console, import | planned | – |
 
 The lists only read: their logic only gets a read delegate, and `tests/plugin/EditorWindowTests.cs`
 checks that on the wire. Without a request the window reads nothing but the eight values with
@@ -198,6 +201,9 @@ cut. Such a reply:
 
 With a declaration none of this applies, and the current float32 values are used as they are.
 
+This way of writing without a declaration is a fallback and is not extended. It is removed with the next extension of the writing editor, as decided in
+`docs/ROADMAP.md`.
+
 **Relations checked**, all taken from what the firmware does (`ODrive::do_fast_checks` in `main.cpp`,
 `update_brake_current` in `low_level.cpp`, the remarks in `odrive-interface.yaml`). No value is too high or
 too low on its own:
@@ -214,6 +220,8 @@ too low on its own:
   in magnitude.
 
 Each write is a state of its own, so the values go out in an order in which no step adds a problem.
+
+The contract all of this follows is in `docs/FOUNDATIONS.md`, this section says how Power / Brake uses it.
 
 **Limits:**
 
@@ -251,6 +259,8 @@ nicht der Web-Client:
 
 ## Details zu 1d
 
+The order of the setup, the comparison with FFBeast and what can be measured and what has to be entered are in `docs/HARDWARE.md`.
+
 **Kt-Wizard** – Eingabe wahlweise als:
 - Kt in Nm/A_rms → ODrive-Wert = Kt_rms / √2
 - Kt in Nm/A_peak → unverändert
@@ -280,6 +290,9 @@ Moment über Lenkgeschwindigkeit (°/s und U/min) mit markiertem Knickpunkt.
 deutlich unter ca. 100 Hz liegt; Empfehlung, R/L-Feedforward zu aktivieren.
 
 ## Details zu 1e
+
+The flasher has to exclude these areas itself. S1 is no help here: it guards flash access by the running firmware, and that firmware is not
+running during DFU.
 
 **Geschützte Bereiche** (weder löschen noch beschreiben):
 

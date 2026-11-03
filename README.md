@@ -15,6 +15,7 @@ full **HID Force Feedback** support to use the motor as a sim racing wheel.
 > ([Package 1, steps 1b–1e](docs/packages/PKG1.md)). The HTML tool
 > `Odrive-Wheel/tools/odrive-wheel.html` stays in the repo as a reference and is
 > no longer developed. GitHub Pages is not part of this project.
+> Plan and hardware targets: [Roadmap](docs/ROADMAP.md), [Hardware](docs/HARDWARE.md).
 
 <p align="center">
   <img src="docs/screenshots/MKSXdriveMini.png" alt="MKS XDrive Mini board" width="420">
