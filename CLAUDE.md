@@ -112,6 +112,27 @@ Then:
 8. Auto-fix applies to the PR it was turned on for, and ends with it. Claude does not merge.
 9. After the merge: update the status in `docs/ROADMAP.md` and the open tests in `docs/TESTING.md`.
 
+### Before reporting a PR as ready
+
+This review is part of the task and needs no additional approval round.
+
+1. State the applicable invariants and a small failure/transition matrix before implementation. For operations, include the relevant events
+   (Cancel, stop, reconnect, capability change, closing) at the boundaries before sending, after a reply and before final completion. Keep
+   related work in small, usable steps rather than combining several independent workflows in one PR.
+2. Trace the full production path against those invariants. Check the result object, visible state and exported output together. In particular,
+   check late cancellation, blocking work on the UI thread, unsupported certainty claims, invalid input types and numeric ranges, and cleanup
+   that must only remove files the operation created. Command syntax alone is no proof that an operation has no side effects.
+3. Use an independent reviewer with fresh context when available. Give it the requirements, relevant contracts, final diff and source. It must
+   look for concrete functional errors and missing failure cases, not treat the implementation narrative or green CI as proof. If no separate
+   reviewer is available, perform a distinct review pass and record that limitation.
+4. Reproduce confirmed findings with targeted, deterministic regressions, show them failing on the affected code, and fix them within the PR.
+   Use controlled hooks or barriers for timing cases. Test counts and successful mutations do not establish completeness. Avoid broad mutation
+   campaigns and repeated full-suite runs without a specific unresolved timing concern.
+5. Run the relevant builds and tests on the final code, and verify CI for the reported head. Review the corrections against the affected
+   invariants; repeat a full review only if new changes or findings justify it. Documentation-only changes need source/diff checks, not builds.
+6. Include the review findings, their resolution, evidence and remaining limits in the English final PR comment. Keep deferred hardware tests
+   explicitly open. This process does not authorize hardware commands or an automatic merge.
+
 **Handover after a finished PR.** A few lines are enough for a new session:
 
 ```text
