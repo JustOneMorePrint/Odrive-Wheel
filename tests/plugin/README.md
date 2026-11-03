@@ -9,7 +9,8 @@ Verbindung zu einem echten COM-Port ist hier also ausgeschlossen, auch nicht aus
 
 ## Ausführen
 
-Voraussetzung: .NET SDK und Zugang zu nuget.org. Läuft als x86-Prozess, wie `SimHubWPF.exe`.
+Voraussetzung: .NET SDK und Zugang zu nuget.org. Läuft als x86-Prozess, wie `SimHubWPF.exe`. For the check against the
+web client's import also Node.js on the PATH; without it that test fails and says why.
 
 ```bash
 dotnet run --project tests/plugin -c Release
@@ -45,6 +46,8 @@ Ein hängender Test scheitert nach 30 s an seinem Zeitlimit.
 | `PowerSupplyTests.cs` | Power supply data: validation, headroom calculation, optional short-time values, settings round trip, not part of profiles, no board command from the window |
 | `FirmwareCapabilityTests.cs` | `sys.capabilities?`: what counts as a declaration, the check per connection with real services (timeout, stop, released port, reconnect, late replies), that format, reader, review, fresh check and readback all follow one declaration, and that a new state of the check ends a review and a running apply, also in the real window |
 | `PowerBrakeTests.cs` | Power / Brake editor: relations from the firmware, float32 values and readback, ambiguous replies of older firmware as readback and as a basis, the review, every reason not to write, aborts between two writes, a stop or a new connection right before a line and around a readback, commands bound to a connection and stop state, and in the real window that only selected values go out and the stop button works during an apply |
+| `SnapshotTests.cs` | Catalog snapshot with real services: every catalog path once and nothing else on the line, replies kept as they came, a stop, a released port, a reconnect, a new firmware check or a cancel before the first line, during the capture, between the capture's check and the worker and after the last reply; a finished stop with its latch set, a reply that comes when the state has changed, failed and unsupported reads, older firmware. Files: layout, metadata bound by hash, no replacing, failures that leave nothing behind, damaged files, missing or unfitting metadata. Comparison: float32 with and without proof, ±0, NaN, ±Inf, large integers, booleans, enums, unknown keys. The report, and in the real window capture, export, stop and port button during a capture, offline file comparison, no file key on the line |
+| `WebClientImport.js` | Runs `doImport` and `exportJSON` of `odrive-wheel.html` unchanged in Node, for the check in `SnapshotTests.cs` that the web client imports the plugin's export as its own. Needs `node` on the PATH, which the Windows runner of the CI has |
 | `ProfileAndActionTests.cs` | Profil anwenden in exakt der bisherigen Zeilenfolge, Spielwechsel, Save to flash, Profildatei, Inc/Dec-Aktionen |
 | `WindowTests.cs` | Echtes WPF-Fenster auf eigenem Thread, Stop-Button per UI-Automation, modaler Dialog auf einem anderen Thread, Schließen während des Starts, Bereich „Extensions“ |
 
