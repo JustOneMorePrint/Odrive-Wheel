@@ -6,6 +6,12 @@ das Testvorgehen in `docs/TESTING.md`.
 
 ## Kontext
 
+- Product name: **ADDD — Another DIY Direct Drive (Wheel)**. Use this name in new user-facing documentation and
+  the application branding. Shared logo assets and usage are documented in `assets/branding/README.md`: blue for
+  documentation, white for SimHub. Existing repository, build, package and protocol names stay until an explicitly
+  scoped migration. Integrating or removing old application logos is Claude's code task, not part of a docs-only update.
+- The root README describes the complete product workflow. Actual implementation and validation status are maintained
+  in `docs/ROADMAP.md` and `docs/TESTING.md`; do not infer that a README feature has already been implemented or tested.
 - Product goal: a DIY direct drive for hoverboard and industrial servo motors, operated entirely through the
   English SimHub plugin. Reliable function, reproducible setup, low measured latency, understandable diagnosis.
 - Fork von `eagabriel/Odrive-Wheel`: ODrive-Firmware 0.5.6 (Motorregelung) plus
