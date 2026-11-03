@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -11,7 +12,9 @@ namespace OdriveWheel.SimHubPlugin
 {
     // The Snapshot tab: a read-only catalog snapshot on request, its files, comparisons and the diagnostic report.
     // It reads through OdriveSnapshotCapture only, and comparing two files does not touch the serial service at all.
-    // File dialogs run on a thread of their own, so the stop button and the port button stay usable.
+    // File dialogs run on a thread of their own, and so do file access, parsing and comparing: the window's thread only
+    // starts them with values that do not change and shows what comes back, so the stop button and the port button stay
+    // usable. A run number tells a late result from a current one, and nothing is shown once the window is closed.
     public partial class OdriveConfigWindow
     {
         private const string JsonFilter   = "Snapshot values (*.json)|*.json|All files (*.*)|*.*";
@@ -24,6 +27,8 @@ namespace OdriveWheel.SimHubPlugin
         private CatalogSnapshot _comparedSnapshot;
         private bool _capturing;
         private int _captureRun;
+        private int _fileRun;
+        private int _compareRun;
         private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
         internal Button    CaptureButton        { get; private set; }
@@ -163,20 +168,45 @@ namespace OdriveWheel.SimHubPlugin
                                      + "but it says nothing about the board now.";
         }
 
+        // ---- Work off the window's thread ---------------------------------------
+
+        /// <summary>Runs at the start of every file job, for tests that hold one there.</summary>
+        internal Action FileWorkHook { get; set; }
+
+        private Task<T> FileWork<T>(Func<T> work)
+        {
+            var hook = FileWorkHook;
+            return Task.Run(() =>
+            {
+                hook?.Invoke();
+                return work();
+            });
+        }
+
+        // A new attempt makes whatever the area showed before history, also for the report.
+        private int BeginComparison(string text)
+        {
+            _comparison = null;
+            _comparedSnapshot = null;
+            ComparisonBox.Text = text;
+            return ++_compareRun;
+        }
+
+        private bool IsCurrentComparison(int run) => !_closed && run == _compareRun;
+
         // ---- Capture -----------------------------------------------------------
 
-        private async void CaptureSnapshot(LoadedSnapshotFile compareWith)
+        private async void CaptureSnapshot(LoadedSnapshotFile compareWith, int compareRun = 0)
         {
-            if (_capturing || _applying || _refreshing || _closed) return;
-            var why = _snapshotCapture.WhyNotStart();
+            if (_closed) return;
+            var why = _capturing || _applying || _refreshing ? "another read or an apply is running" : _snapshotCapture.WhyNotStart();
             if (why != null)
             {
                 SnapshotProgressText.Text = "Cannot capture: " + why + ".";
-                if (compareWith != null) ComparisonBox.Text = "Nothing was compared: cannot capture the board, " + why + ".";
+                if (compareWith != null && IsCurrentComparison(compareRun))
+                    ComparisonBox.Text = "Nothing was compared: cannot capture the board, " + why + ".";
                 return;
             }
-            // An earlier result must not stand there as if it were the answer to this one.
-            if (compareWith != null) ComparisonBox.Text = "Reading the board for the comparison…";
 
             _capturing = true;
             int run = ++_captureRun;
@@ -220,7 +250,7 @@ namespace OdriveWheel.SimHubPlugin
             if (_closed) return;
             if (snapshot == null)
             {
-                if (compareWith != null) ComparisonBox.Text = "Nothing was compared: " + SnapshotProgressText.Text;
+                if (compareWith != null && IsCurrentComparison(compareRun)) ComparisonBox.Text = "Nothing was compared: " + SnapshotProgressText.Text;
                 return;
             }
 
@@ -234,64 +264,109 @@ namespace OdriveWheel.SimHubPlugin
             UpdateSnapshotButtons();
             UpdateSnapshotAge(_serial.GetStatus());
 
-            if (compareWith != null)
-                ShowComparison(SnapshotComparison.Compare(compareWith.ToSide(Path.GetFileName(compareWith.ValuesPath)),
-                                                          SnapshotSide.FromSnapshot(snapshot, "the board, snapshot of " + OdriveSnapshotText.Time(snapshot.StartedUtc)),
-                                                          _catalog),
-                               snapshot, compareWith);
+            if (compareWith == null || !IsCurrentComparison(compareRun)) return;
+            var catalog = _catalog;
+            var shown = await Compute(() => Compared(compareWith.ToSide(Path.GetFileName(compareWith.ValuesPath)),
+                                                     SnapshotSide.FromSnapshot(snapshot, "the board, snapshot of " + OdriveSnapshotText.Time(snapshot.StartedUtc)),
+                                                     catalog, compareWith));
+            if (!IsCurrentComparison(compareRun)) return;
+            ShowComparison(shown, snapshot);
         }
 
         // ---- Comparing ---------------------------------------------------------
 
-        private void CompareBoardWithFile()
+        private sealed class ComparisonShown
         {
-            var file = LoadForComparison(CompareLeftBox.Text);
+            public SnapshotComparison Comparison;
+            public string Text;
+        }
+
+        private static ComparisonShown Compared(SnapshotSide left, SnapshotSide right, OdriveParameterCatalog catalog, params LoadedSnapshotFile[] files)
+        {
+            var comparison = SnapshotComparison.Compare(left, right, catalog);
+            var text = new StringBuilder();
+            foreach (var file in files) text.AppendLine(OdriveSnapshotText.LoadedFile(file));
+            text.Append(OdriveSnapshotText.Comparison(comparison));
+            return new ComparisonShown { Comparison = comparison, Text = text.ToString() };
+        }
+
+        // Comparing is no file job, but it runs off the window's thread as well. A failure becomes text.
+        private static async Task<ComparisonShown> Compute(Func<ComparisonShown> work)
+        {
+            try
+            {
+                return await Task.Run(work);
+            }
+            catch (Exception ex)
+            {
+                return new ComparisonShown { Text = "Nothing was compared: " + ex.Message };
+            }
+        }
+
+        private async void CompareBoardWithFile()
+        {
+            if (_closed) return;
+            int run = BeginComparison("Reading the file…");
+            var path = CompareLeftBox.Text;
+            LoadedSnapshotFile file;
+            try
+            {
+                file = await FileWork(() => LoadForComparison(path));
+            }
+            catch (Exception ex)
+            {
+                file = new LoadedSnapshotFile(path, ex.Message);
+            }
+            if (!IsCurrentComparison(run)) return;
             if (!file.Loaded)
             {
                 ComparisonBox.Text = OdriveSnapshotText.LoadedFile(file) + " Nothing was read from the board.";
                 return;
             }
-            CaptureSnapshot(compareWith: file);
+            // An earlier result must not stand there as if it were the answer to this one.
+            ComparisonBox.Text = "Reading the board for the comparison…";
+            CaptureSnapshot(file, run);
         }
 
         /// <summary>Offline: two files, no serial access of any kind.</summary>
-        internal void CompareFiles()
+        internal async void CompareFiles()
         {
-            var left = LoadForComparison(CompareLeftBox.Text);
-            var right = LoadForComparison(CompareRightBox.Text);
-            if (!left.Loaded || !right.Loaded)
+            if (_closed) return;
+            int run = BeginComparison("Comparing the files…");
+            string leftPath = CompareLeftBox.Text, rightPath = CompareRightBox.Text;
+            var catalog = _catalog;
+            ComparisonShown shown;
+            try
             {
-                ComparisonBox.Text = string.Join(Environment.NewLine, new[] { left, right }.Where(f => !f.Loaded).Select(OdriveSnapshotText.LoadedFile))
-                                   + Environment.NewLine + "Nothing was compared.";
-                return;
+                shown = await FileWork(() =>
+                {
+                    var left = LoadForComparison(leftPath);
+                    var right = LoadForComparison(rightPath);
+                    if (!left.Loaded || !right.Loaded)
+                        return new ComparisonShown
+                        {
+                            Text = string.Join(Environment.NewLine, new[] { left, right }.Where(f => !f.Loaded).Select(OdriveSnapshotText.LoadedFile))
+                                 + Environment.NewLine + "Nothing was compared.",
+                        };
+                    return Compared(left.ToSide(Path.GetFileName(left.ValuesPath)), right.ToSide(Path.GetFileName(right.ValuesPath)), catalog, left, right);
+                });
             }
-            ShowComparison(SnapshotComparison.Compare(left.ToSide(Path.GetFileName(left.ValuesPath)), right.ToSide(Path.GetFileName(right.ValuesPath)), _catalog),
-                           null, left, right);
+            catch (Exception ex)
+            {
+                shown = new ComparisonShown { Text = "Nothing was compared: " + ex.Message };
+            }
+            if (!IsCurrentComparison(run)) return;
+            ShowComparison(shown, null);
         }
 
-        private LoadedSnapshotFile LoadForComparison(string text)
+        private static LoadedSnapshotFile LoadForComparison(string text)
+            => OdriveSnapshotFile.Load((text ?? "").Trim().Trim('"'));
+
+        private void ShowComparison(ComparisonShown shown, CatalogSnapshot snapshot)
         {
-            FileWorkHook?.Invoke();
-            return OdriveSnapshotFile.Load((text ?? "").Trim().Trim('"'));
-        }
-
-        /// <summary>Runs at the start of every file job, for tests that hold one there.</summary>
-        internal Action FileWorkHook { get; set; }
-
-        /// <summary>What the export dialog calls with the chosen path.</summary>
-        internal void OnExportPicked(CatalogSnapshot snapshot, string path) => ExportSnapshotTo(snapshot, path);
-
-        /// <summary>What the report dialog calls with the chosen path.</summary>
-        internal void OnReportPicked(CatalogSnapshot snapshot, string path) => WriteReportTo(snapshot, path);
-
-        private void ShowComparison(SnapshotComparison comparison, CatalogSnapshot snapshot, params LoadedSnapshotFile[] files)
-        {
-            _comparison = comparison;
-            _comparedSnapshot = snapshot;
-            var text = new StringBuilder();
-            foreach (var file in files) text.AppendLine(OdriveSnapshotText.LoadedFile(file));
-            text.Append(OdriveSnapshotText.Comparison(comparison));
-            ComparisonBox.Text = text.ToString();
+            _comparison = shown.Comparison;
+            _comparedSnapshot = shown.Comparison != null ? snapshot : null;
+            ComparisonBox.Text = shown.Text;
         }
 
         // ---- Files -------------------------------------------------------------
@@ -305,19 +380,34 @@ namespace OdriveWheel.SimHubPlugin
                                      path => OnExportPicked(snapshot, path), _log);
         }
 
-        /// <summary>Writes the values file and its metadata, and says exactly what came of it.</summary>
-        internal SnapshotExportResult ExportSnapshotTo(CatalogSnapshot snapshot, string path)
+        /// <summary>What the export dialog calls with the chosen path.</summary>
+        internal void OnExportPicked(CatalogSnapshot snapshot, string path) => _ = ExportSnapshotToAsync(snapshot, path);
+
+        /// <summary>Writes the values file and its metadata off the window's thread, and says exactly what came of it.</summary>
+        internal async Task<SnapshotExportResult> ExportSnapshotToAsync(CatalogSnapshot snapshot, string path)
         {
-            FileWorkHook?.Invoke();
-            var result = OdriveSnapshotFile.Export(snapshot, path, PluginVersion);
-            if (_closed) return result;
+            int run = ++_fileRun;
+            SnapshotFileText.Text = "Writing " + path + "…";
+            SnapshotFileText.Foreground = BrushNeutral;
+            var version = PluginVersion;
+            SnapshotExportResult result;
+            try
+            {
+                result = await FileWork(() => OdriveSnapshotFile.Export(snapshot, path, version));
+            }
+            catch (Exception ex)
+            {
+                result = new SnapshotExportResult(path, null, null, 0, ex.Message);
+            }
+            if (_closed || run != _fileRun) return result;
+
             if (result.Succeeded)
             {
                 _lastFolder = Path.GetDirectoryName(result.ValuesPath);
                 SnapshotFileText.Text = "Exported and read back: " + result.ValuesPath + " (" + result.ValueCount + " settings) and "
                                       + Path.GetFileName(result.MetadataPath) + ". "
                                       + (snapshot.Completeness == SnapshotCompleteness.Partial ? "PARTIAL snapshot, marked as such in both names and the metadata. " : "")
-                                      + (snapshot.Capabilities.FloatsAreExact ? "" : "Precision not proven, the metadata says so. ")
+                                      + (snapshot.UncertainCount > 0 ? snapshot.UncertainCount + " values are not exact, the metadata names each with its reason. " : "")
                                       + "A catalog snapshot, no restore backup.";
                 SnapshotFileText.Foreground = snapshot.Completeness == SnapshotCompleteness.Complete && snapshot.Capabilities.FloatsAreExact ? BrushOk : BrushWarn;
             }
@@ -337,17 +427,44 @@ namespace OdriveWheel.SimHubPlugin
                                      path => OnReportPicked(snapshot, path), _log);
         }
 
-        /// <summary>Writes the report of this snapshot, with the comparison that belongs to it. Null on success, else why not.</summary>
-        internal string WriteReportTo(CatalogSnapshot snapshot, string path)
+        /// <summary>What the report dialog calls with the chosen path.</summary>
+        internal void OnReportPicked(CatalogSnapshot snapshot, string path) => _ = WriteReportToAsync(snapshot, path);
+
+        /// <summary>Writes the report of this snapshot, with the comparison that belongs to it, off the window's thread.
+        /// Null on success, else why not.</summary>
+        internal async Task<string> WriteReportToAsync(CatalogSnapshot snapshot, string path)
         {
-            FileWorkHook?.Invoke();
+            int run = ++_fileRun;
+            // Taken now: what the window holds may change while the report is written.
             var comparison = _comparedSnapshot == snapshot ? _comparison : null;
-            var text = OdriveDiagnosticReport.Build(snapshot, comparison, PluginVersion, DateTime.UtcNow);
-            string error = null;
+            var version = PluginVersion;
+            var now = DateTime.UtcNow;
+            SnapshotFileText.Text = "Writing " + path + "…";
+            SnapshotFileText.Foreground = BrushNeutral;
+
+            string error, written = path;
+            try
+            {
+                (error, written) = await FileWork(() => WriteReport(snapshot, comparison, version, now, path));
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+            if (_closed || run != _fileRun) return error;
+
+            SnapshotFileText.Text = error == null ? "Report written and read back: " + written + "." : "Report FAILED: " + error;
+            SnapshotFileText.Foreground = error == null ? BrushNeutral : BrushDanger;
+            if (error == null) _lastFolder = Path.GetDirectoryName(written);
+            return error;
+        }
+
+        private static (string Error, string Path) WriteReport(CatalogSnapshot snapshot, SnapshotComparison comparison, string version, DateTime now, string path)
+        {
             try
             {
                 path = Path.GetFullPath(path);
-                var bytes = new UTF8Encoding(false).GetBytes(text);
+                var bytes = new UTF8Encoding(false).GetBytes(OdriveDiagnosticReport.Build(snapshot, comparison, version, now));
                 using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     stream.Write(bytes, 0, bytes.Length);
@@ -356,22 +473,14 @@ namespace OdriveWheel.SimHubPlugin
                 if (!File.ReadAllBytes(path).SequenceEqual(bytes))
                 {
                     File.Delete(path);
-                    error = "the report read back differently and was removed";
+                    return ("the report read back differently and was removed", path);
                 }
+                return (null, path);
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
-                                       || ex is NotSupportedException || ex is System.Security.SecurityException)
+            catch (Exception ex)
             {
-                error = ex.Message;
+                return (ex.Message, path);
             }
-
-            if (!_closed)
-            {
-                SnapshotFileText.Text = error == null ? "Report written and read back: " + path + "." : "Report FAILED: " + error;
-                SnapshotFileText.Foreground = error == null ? BrushNeutral : BrushDanger;
-                if (error == null) _lastFolder = Path.GetDirectoryName(path);
-            }
-            return error;
         }
     }
 }

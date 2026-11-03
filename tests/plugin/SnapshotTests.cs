@@ -572,6 +572,41 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        // The list of harmless OpenFFBoard reads against their handlers: a get that only prints, every change behind the set
+        // branch, no flash, EEPROM, reboot or bridge call. A text check of cmd_table.cpp, not a run of the firmware.
+        public static void Test_the_harmless_openffboard_reads_only_print_a_value()
+        {
+            var table = File.ReadAllText(CatalogInterfaceTests.FromRepoRoot("Odrive-Wheel/src/cmd_table.cpp"));
+            var catalog = OdriveParameterCatalog.LoadEmbedded();
+            foreach (var parameter in catalog.Parameters.Where(p => p.Protocol == FieldProtocol.Openffb))
+                Check.True(OdriveProtocol.HarmlessOffbReads.Contains(parameter.Path), "a catalog read the snapshot may send: " + parameter.Path);
+
+            var forbidden = new System.Text.RegularExpressions.Regex(
+                @"\b(ffb_save\w*|ffb_ee\w*|ffb_axis_zeroenc|Flash_\w+|EE_\w+|HAL_FLASH\w*|NVIC_SystemReset|\w*reboot\w*|odrive_bridge_\w+)\s*\(");
+            foreach (var path in OdriveProtocol.HarmlessOffbReads)
+            {
+                var parts = path.Split('.');
+                var registration = System.Text.RegularExpressions.Regex.Match(table, "\\{\\s*\"" + parts[0] + "\",\\s*\"" + parts[1] + "\",\\s*(\\w+)\\s*\\}");
+                Check.True(registration.Success, "registered: " + path);
+                if (!registration.Success) continue;
+                var handler = registration.Groups[1].Value;
+                var body = System.Text.RegularExpressions.Regex.Match(table, "static int " + handler + "\\([^)]*\\)\\s*\\{(.*?)\\n\\}",
+                                                                      System.Text.RegularExpressions.RegexOptions.Singleline);
+                Check.True(body.Success, "the handler is a function of its own: " + handler);
+                if (!body.Success) continue;
+                var code = body.Groups[1].Value;
+                Check.True(!forbidden.IsMatch(code), "no flash, EEPROM, reboot or bridge call in " + handler);
+                bool changes = System.Text.RegularExpressions.Regex.IsMatch(code, @"\b\w+_set_\w+\s*\(");
+                Check.True(!changes || code.Contains("t == CMD_TYPE_SET"), "a change only behind the set branch: " + handler);
+            }
+
+            // The review's examples are no harmless reads, and their handlers do reach the flash on a get.
+            foreach (var path in new[] { "sys.save", "sys.eetest", "sys.eedump", "sys.eeformat" })
+                Check.True(!OdriveProtocol.HarmlessOffbReads.Contains(path) && !OdriveProtocol.IsHarmlessRead(path + "?"), "not harmless: " + path);
+            Check.True(OdriveProtocol.IsHarmlessRead("r axis0.motor.config.current_lim"), "an ODrive property read is");
+            Check.True(!OdriveProtocol.IsHarmlessRead("r axis0.motor.config.current_lim 5"), "a line with more is not");
+        }
+
         public static void Test_clearing_the_latch_after_the_last_reply_gives_no_complete_snapshot()
         {
             using (var rig = new SnapshotRig())
@@ -727,7 +762,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.Equal(1, (int)meta["_version"], "version");
             Check.Equal(OdriveParameterCatalog.Sha256Hex(File.ReadAllBytes(path)), (string)meta["values_file"]["sha256"], "bound to the values file");
             Check.Equal("complete", (string)meta["completeness"], "completeness");
-            Check.True((bool)meta["values_exact"], "exact");
+            Check.True((bool)meta["precision"]["all_values_exact"] == false && (int)meta["precision"]["uncertain_values"] == snapshot.UncertainCount, "precision per value");
             Check.Equal(FakeBoard.Declaration, (string)meta["capabilities"]["declaration"], "the evidence");
             Check.Equal(false, (bool)meta["capture"]["simultaneous"], "not simultaneous");
             Check.Equal("RAM of the board, read over the serial connection", (string)meta["capture"]["source"], "the origin");
@@ -1321,18 +1356,18 @@ namespace OdriveWheel.SimHubPlugin.Tests
 
                 var folder = SnapshotFileTests.NewFolder();
                 var path = Path.Combine(folder, OdriveSnapshotFile.FileName(snapshot.StartedUtc, snapshot.Completeness));
-                var result = rig.On(w => w.ExportSnapshotTo(snapshot, path));
+                var result = rig.On(w => w.ExportSnapshotToAsync(snapshot, path)).Result;
                 Check.True(result.Succeeded, result.Error);
                 Check.True(rig.On(w => w.SnapshotFileText.Text).StartsWith("Exported and read back", StringComparison.Ordinal), rig.On(w => w.SnapshotFileText.Text));
 
-                var again = rig.On(w => w.ExportSnapshotTo(snapshot, path));
+                var again = rig.On(w => w.ExportSnapshotToAsync(snapshot, path)).Result;
                 Check.True(!again.Succeeded, "a second export to the same name fails");
                 Check.True(rig.On(w => w.SnapshotFileText.Text).StartsWith("Export FAILED", StringComparison.Ordinal), "and says so");
 
                 var report = Path.Combine(folder, "report.md");
-                Check.Equal(null, rig.On(w => w.WriteReportTo(snapshot, report)), "report written");
+                Check.Equal(null, rig.On(w => w.WriteReportToAsync(snapshot, report)).Result, "report written");
                 Check.True(File.ReadAllText(report).Contains("# Odrive-Wheel diagnostic report"), "report content");
-                Check.True(rig.On(w => w.WriteReportTo(snapshot, report)) != null, "never replaced");
+                Check.True(rig.On(w => w.WriteReportToAsync(snapshot, report)).Result != null, "never replaced");
             }
         }
 
