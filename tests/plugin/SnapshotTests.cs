@@ -1233,6 +1233,30 @@ namespace OdriveWheel.SimHubPlugin.Tests
             }
         }
 
+        public static void Test_an_earlier_comparison_does_not_stand_for_one_that_could_not_run()
+        {
+            var folder = SnapshotFileTests.NewFolder();
+            var file = Path.Combine(folder, "a.json");
+            File.WriteAllText(file, "{ \"config.brake_resistance\": \"7\" }");
+            using (var rig = NewRig())
+            {
+                rig.Host.Invoke(w =>
+                {
+                    w.CompareLeftBox.Text = file;
+                    WindowTests.Click(w.CompareBoardButton);
+                });
+                Check.True(Wait.Until(() => rig.On(w => w.ComparisonBox.Text).Contains("Settings:"), 15000), "a first comparison");
+
+                rig.Host.Invoke(w => WindowTests.Click(w.PortButton));
+                Check.True(Wait.Until(() => rig.Rig.Service.GetStatus().State == SerialConnectionState.Released), "released");
+                Check.True(Wait.Until(() => rig.On(w => w.CompareBoardButton.IsEnabled)), "can be pressed");
+                rig.Host.Invoke(w => WindowTests.Click(w.CompareBoardButton));
+                Check.True(Wait.Until(() => rig.On(w => w.ComparisonBox.Text).StartsWith("Nothing was compared: cannot capture the board", StringComparison.Ordinal)),
+                           rig.On(w => w.ComparisonBox.Text));
+                Check.True(!rig.On(w => w.ComparisonBox.Text).Contains("Settings:"), "the earlier result is gone");
+            }
+        }
+
         public static void Test_a_damaged_file_is_named_and_nothing_is_read()
         {
             var folder = SnapshotFileTests.NewFolder();

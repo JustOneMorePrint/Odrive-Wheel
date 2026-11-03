@@ -172,8 +172,11 @@ namespace OdriveWheel.SimHubPlugin
             if (why != null)
             {
                 SnapshotProgressText.Text = "Cannot capture: " + why + ".";
+                if (compareWith != null) ComparisonBox.Text = "Nothing was compared: cannot capture the board, " + why + ".";
                 return;
             }
+            // An earlier result must not stand there as if it were the answer to this one.
+            if (compareWith != null) ComparisonBox.Text = "Reading the board for the comparison…";
 
             _capturing = true;
             int run = ++_captureRun;
@@ -214,7 +217,12 @@ namespace OdriveWheel.SimHubPlugin
                     UpdateSnapshotButtons();
                 }
             }
-            if (snapshot == null || _closed) return;
+            if (_closed) return;
+            if (snapshot == null)
+            {
+                if (compareWith != null) ComparisonBox.Text = "Nothing was compared: " + SnapshotProgressText.Text;
+                return;
+            }
 
             _snapshot = snapshot;
             _comparison = null;
