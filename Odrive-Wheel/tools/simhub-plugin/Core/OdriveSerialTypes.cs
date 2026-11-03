@@ -98,8 +98,8 @@ namespace OdriveWheel.SimHubPlugin
             => new SerialOperationContext(connectGeneration);
 
         /// <summary>Reads bound to one connection and one stop state, which may be a finished stop with the latch
-        /// set. A new stop, or the latch changing either way, ends them. Nothing but reads goes out with it, so the
-        /// latch it tolerates opens no write.</summary>
+        /// set. A new stop, or the latch changing either way, ends them. Nothing but reads known to change nothing goes out
+        /// with it (<see cref="OdriveProtocol.IsHarmlessRead"/>), so the latch it tolerates opens no write and no flash access.</summary>
         public static SerialOperationContext ForReading(int connectGeneration, StopTicket lastStop, bool stopLatched)
             => new SerialOperationContext(connectGeneration, lastStop, stopLatched);
 
@@ -108,7 +108,7 @@ namespace OdriveWheel.SimHubPlugin
         public bool       BindsStop         { get; }
         /// <summary>The state of the latch the operation was prepared with. Only reads may expect it set.</summary>
         public bool       StopLatched       { get; }
-        /// <summary>The worker refuses any line that is not a read.</summary>
+        /// <summary>The worker refuses any line that is not a harmless read.</summary>
         public bool       ReadsOnly         { get; }
     }
 

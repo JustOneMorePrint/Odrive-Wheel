@@ -406,8 +406,8 @@ namespace OdriveWheel.SimHubPlugin
         private SerialResult ContextRefusal(SerialOperationContext context, string line)
         {
             if (context == null) return null;
-            if (context.ReadsOnly && !OdriveProtocol.IsReadLine(line))
-                return new SerialResult(SerialOutcome.Cancelled, detail: "only reads belong to this operation, not sent");
+            if (context.ReadsOnly && !OdriveProtocol.IsHarmlessRead(line))
+                return new SerialResult(SerialOutcome.Cancelled, detail: "not a read this operation may send, not sent");
             if (context.BindsStop && (_stopLatched != context.StopLatched || _lastStop != context.LastStop))
                 return new SerialResult(SerialOutcome.BlockedByStop, detail: "software stop, not sent");
             if (Volatile.Read(ref _generation) != context.ConnectGeneration)

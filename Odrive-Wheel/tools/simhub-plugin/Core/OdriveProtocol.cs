@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -35,13 +36,28 @@ namespace OdriveWheel.SimHubPlugin
         public static string OffbWrite(string path, string value)   => path + "=" + value;
         public static string OffbExec(string path)                  => path + "!";
 
-        /// <summary>True only for a read of one valid path in either dialect, nothing else on the line.</summary>
-        public static bool IsReadLine(string line)
+        /// <summary>
+        /// OpenFFBoard commands whose get does nothing but print a value. A '?' alone proves nothing: the handler runs, and
+        /// sys.save?, sys.eetest?, sys.eedump? and sys.eeformat? reach the flash that way (cmd_table.cpp). Each entry is held
+        /// against its handler by tests/plugin/SnapshotTests.cs, a new one needs the same.
+        /// </summary>
+        public static IReadOnlyCollection<string> HarmlessOffbReads => HarmlessOffb;
+
+        private static readonly HashSet<string> HarmlessOffb = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "sys.build",
+            "sys.vbusdiv",
+            "axis.maxtorque",
+            "fx.master",
+        };
+
+        /// <summary>A read known to change nothing: an ODrive "r" of one valid path, which only reads a property
+        /// (cmd_read_property in ascii_protocol.cpp), or the get of a command in <see cref="HarmlessOffbReads"/>.</summary>
+        public static bool IsHarmlessRead(string line)
         {
             if (line == null) return false;
             if (line.StartsWith("r ", StringComparison.Ordinal)) return IsValidPath(line.Substring(2));
-            return line.EndsWith("?", StringComparison.Ordinal) && IsValidPath(line.Substring(0, line.Length - 1))
-                && line.IndexOf('.') > 0;
+            return line.EndsWith("?", StringComparison.Ordinal) && HarmlessOffb.Contains(line.Substring(0, line.Length - 1));
         }
 
         /// <summary>What an OpenFFBoard reply to this line starts with. A write echo is only
