@@ -9,13 +9,14 @@ add to it, and then everyone gets the addition. Planning is in `docs/ROADMAP.md`
 |---|---|---|
 | One owner of the port | `Core/OdriveSerialService.cs` | One worker thread, one command on the wire, priorities, resync after a timeout, the software stop ahead of everything |
 | Reading and writing | `Core/OdriveParameterService.cs` | Both dialects, results that say how far a line got |
-| Operation binding | `SerialOperationContext` in `Core/OdriveSerialTypes.cs` | A command goes out only while its connection and stop state still hold, checked by the worker right before the line |
+| Operation binding | `SerialOperationContext` in `Core/OdriveSerialTypes.cs` | A command goes out only while its connection and stop state still hold, checked by the worker right before the line. `ForReading` also accepts a finished stop with its latch set, and lets nothing but reads through |
 | Firmware capabilities | `Core/OdriveFirmwareCapabilities.cs`, `sys.capabilities?` | What the firmware of this connection declares, contract in `docs/packages/PKG1.md` |
 | First operation built on it | `Core/OdriveRamApply.cs` | Review, fresh check, write, readback, for Power / Brake |
+| A reading operation on it | `Core/OdriveCatalogSnapshot.cs` | The catalog snapshot: every catalog path once, bound to one connection, stop state and capability state, `docs/packages/PKG1.md` |
 | Flash guard | `src/flash_guard.c`, `safe.status?` | The firmware refuses flash operations with an active motor, and arming during one |
 
-`OdriveRamApply` is one user of the contract and not yet a general runner. When the second writing function
-arrives, its steps move into something both use. No framework before that.
+`OdriveRamApply` and the snapshot capture each check the contract themselves, and are not yet a general runner. When the second
+writing function arrives, the steps they share move into something all use. No framework before that.
 
 ## The contract of an operation
 
@@ -109,7 +110,7 @@ are no further heuristics to guess what a firmware can do. What the firmware doe
 | Function | Needs on this connection |
 |---|---|
 | Read and display | A connection. Without a declaration long numbers stay marked |
-| Backup and comparison | `ascii_full=1 float32_rt=1`, or the file says that values are uncertain |
+| Backup and comparison | `ascii_full=1 float32_rt=1`, or the file says that values are uncertain. The catalog snapshot does the latter in its metadata, and a file without matching metadata proves no precision |
 | Write to RAM, new functions | `ascii_full=1 float32_rt=1`, latch clear, axes idle, readback |
 | Write to RAM, Power / Brake of PR #7 | As above, or today still its fallback for values that look exact. Decided: the fallback goes with the next extension of the writing editor, `docs/ROADMAP.md` |
 | Save to flash | The above, and the firmware's flash guard |

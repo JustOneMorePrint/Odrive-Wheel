@@ -13,8 +13,8 @@ nicht zum Projektbetrieb. Wo die Testspalte unten den Web-Client nennt, ist die 
 `Odrive-Wheel/tools/odrive-wheel.html` gemeint.
 
 **Status:** 1a is in `main`, its hardware tests are open. Of 1b, the read-only tabs, the power supply
-data, the editing of Power / Brake to RAM and the firmware capability check are implemented and not
-checked on the board ([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin
+data, the editing of Power / Brake to RAM, the firmware capability check and the catalog snapshot with
+export, comparison and diagnostic report are implemented and not checked on the board ([Status of 1b](#status-of-1b)). The rest of 1b and 1c–1e are planned, so the plugin
 does not have those functions yet. The capability check is the only firmware change of this package so far, see
 [Firmware capabilities](#firmware-capabilities).
 
@@ -81,7 +81,7 @@ Each step is a branch and PR of its own (`pkg/1a-...` and so on). The order and 
 | Editing the ten `config.*` fields of Power / Brake, to RAM only | yes, tested against the simulated board | no |
 | `sys.capabilities?` in the firmware, and its use in the plugin | yes, on the PC: real parser and formatting, simulated board | no |
 | Editing anything else, saving (`ss`) from the editor, clearing errors, erasing the config, state changes and calibrations | planned | – |
-| Export, comparison, diagnostic report | planned next, stage 1 in `docs/ROADMAP.md` | – |
+| Catalog snapshot, export, comparison, diagnostic report ([Catalog snapshot](#catalog-snapshot)) | yes, tested against the simulated board, the export against the web client's own import code | no |
 | Console, import | planned | – |
 
 The lists only read: their logic only gets a read delegate, and `tests/plugin/EditorWindowTests.cs`
@@ -247,7 +247,8 @@ nicht der Web-Client:
   `to_string` kürzte ohne Meldung. Aus dem Fehlercode `2147483648` wurde so `214748364`. The firmware is fixed
   (`docs/ROADMAP.md`, „Vollständige ASCII-Leseantworten“) and says so through `sys.capabilities?`. Without that
   declaration the display still marks every number of 9 or more characters. **For the export this means:** values read
-  through `r` may go into a backup only with a declaration on that connection, or marked as uncertain.
+  through `r` may go into a backup only with a declaration on that connection, or marked as uncertain. The
+  [catalog snapshot](#catalog-snapshot) does the latter in its metadata.
 - **Falsche Namen im Web-Client:** Er nennt die Stream-Protokolle `1 FIBRE`, `2 ASCII`, `3 ASCII_AND_STDOUT`,
   `4 STDOUT`. Die Firmware zählt `0 Fibre`, `1 Ascii`, `2 Stdout`, `3 AsciiAndStdout`. Der Katalog folgt der Firmware.
 - **Schreibbarkeit weicht ab:** `phase_resistance`, `phase_inductance`, `direction`, `phase_offset` und
@@ -256,6 +257,91 @@ nicht der Web-Client:
   `anticogging.index` in der Firmware nur lesbar, obwohl der Web-Client sie zum Schreiben anbietet.
 - **Einheiten** stammen aus dem Interface. Nur wo es keine nennt, gilt die ausdrückliche Angabe des Web-Clients.
   Parameter ohne Text in beiden Quellen tragen den Hinweis „No description in the firmware interface.“
+
+## Catalog snapshot
+
+Stage 1 of `docs/ROADMAP.md`: a first copy before anything changes. Tab **Snapshot** of the window, user's view in
+`Odrive-Wheel/tools/simhub-plugin/USER_MANUAL.md`.
+
+**What it is.** Every path of the catalog read once, one after the other, from the RAM of the board, into a record of its
+own (`CatalogSnapshot` in `Core/OdriveCatalogSnapshot.cs`). It is no complete NVM image, no calibration record and no
+restore backup. The reader cache of the tabs plays no part: it changes with every refresh and is no consistent picture. A
+reply is kept as the parameter service returns it, without its line end and surrounding whitespace, never formatted or
+decoded. Formatting and error decoding happen when it is shown.
+
+| Section | What | In the values file |
+|---|---|---|
+| Settings | The catalog's tabs PSU / Brake, Axis, Motor, Encoder and Controller, `sys.vbusdiv`, `axis.maxtorque`, `fx.master` | yes |
+| Status | The status tab, and the paths the web client leaves out of its export (`READONLY_EXPORT_PATHS`: `anticogging.index`) | no, in the metadata |
+
+Not included, and named in every file: the other FFB settings, FFB filters and EQ, inputs and GPIO, profiles, plugin settings
+and power supply data, the anticogging map, `axis1`, the flash contents.
+
+**The contract** (`docs/FOUNDATIONS.md`). The whole capture rests on one connection, one stop state and one state of the
+firmware check, and each request carries them:
+
+- `SerialOperationContext.ForReading`: the worker refuses the line if the connection changed, a new stop came, or the latch
+  changed in either direction. Only read lines (`r <path>`, `<path>?`) pass with it, so the latch it tolerates opens no write.
+- The `Superseded` token of the firmware check is linked to every request.
+- A finished stop with its latch set is a stop state like any other. A capture reads then, it never clears the latch, and the
+  command guard stays as it is. A running stop prevents the start, and so does a firmware check that has not ended.
+- A reply counts only if the state still holds when it is here. Before the snapshot is called finished the state is looked at
+  once more: a change after the last reply makes it partial as well.
+- Results: complete, complete with failed values (not supported, refused, no reply, unexpected reply, each named), partial (with
+  the reason). Two timeouts in a row end it. There is no retry, and nothing is taken from earlier reads or the reader cache.
+
+**Files.** `odrive_config_<time>.json` is the flat `"path": "string"` JSON of `exportJSON` in `odrive-wheel.html`, settings
+only, replies as they came. `odrive_config_<time>.meta.json` next to it, `_type` `odrive-wheel-catalog-snapshot`, `_version` 1:
+
+| Field | Content |
+|---|---|
+| `values_file` | Name, SHA-256, size and number of entries of the values file. The binding: other content, other hash |
+| `completeness`, `abort_reason` | As above |
+| `values_exact`, `capabilities` | The declaration as the firmware sent it, its flags, or why there was none |
+| `capture` | Start and end in UTC, the source (RAM, serial), `simultaneous: false`, port, connection |
+| `stop` | Whether the latch was set, how the last stop ended |
+| `firmware`, `catalog` | `sys.build` as read; catalog version, SHA-256 and counts |
+| `not_included`, `failed`, `uncertain` | What is not in it, each path without a value and why, each value that may be rounded or cut off |
+| `status_values` | The status section, replies as they came |
+
+The export refuses to replace a file. It writes both to temporary files, reads them back, moves them into place and loads them
+again as any file is loaded. Only a load that finds the metadata matching and the values as captured counts as success, otherwise
+whatever it wrote is removed again. A partial snapshot has `_partial` in its names.
+
+**Loading.** A file is data. It must be one UTF-8 JSON object of at most 4 MB, without a key twice and without anything after it;
+values stay strings, no date or number conversion. Values that are no string are named and left out. The metadata counts only if
+its hash is that of the values file, its version is known and its flags fit its declaration. Otherwise, and without metadata, the
+values can be compared but their precision is not proven, and the metadata's status values are not used. Choosing the metadata file
+leads only to a plain file name next to it.
+
+**Comparison** (`Core/OdriveSnapshotComparison.cs`), board against a file or two files. The board side is always a new capture,
+through the catalog paths only, so a file key never reaches the board. Two files are compared without touching the serial service.
+
+- Floats are float32. They compare by value only where both replies are exact, so `32.012` and `32.012001` are the same with a
+  declaration on both sides. +0 and -0 are the same value, two NaN are the same (no payload is compared), `inf` and `-inf` differ
+  from each other and from every number. Non-finite replies are exact without a declaration as well.
+- Integers, bitmasks, enums and axis states compare as whole numbers of any size, nothing goes through a double. A reply of older
+  firmware that may be cut is a prefix of the whole number, which decides some cases.
+- Booleans take `0` and `1`, and `True`/`False` of older web client files. Text compares as text.
+- Where a side is not exact, equal text is `same text` only. Different text is `DIFFERS` only where no rounding by the last digit
+  shown, and no cutting, can explain it, otherwise `unclear`.
+- Paths the catalog does not know are compared as text and marked. Settings and status values are listed apart.
+
+**Diagnostic report** (`Core/OdriveDiagnosticReport.cs`), Markdown: capture and scope, build, firmware version, the hardware
+version as reported with the note that it identifies no board, the declaration, errors in clear text, axis state, bus voltage with
+the trip levels as settings, temperatures with their limits and the error at upper + 5 °C, failed reads, differences from the last
+compared file. The known limits of the temperature readings are next to the values: 0 is ambiguous, a disabled sensor is still
+evaluated, the firmware cannot tell a missing sensor.
+
+**Limits:**
+
+- Tested on the PC against the simulated board, with the real serial, parameter and capability services. Nothing of it has run on a
+  board.
+- The values are read one after the other, the snapshot names the span. How long it takes on a board has not been measured. A
+  setting changed by another command source in that span can be in the snapshot before or after the change.
+- The OpenFFBoard values are not covered by the declaration: `axis.maxtorque` is written with two decimals, so it counts as rounded.
+- The check against the web client runs its own `doImport` and `exportJSON` from `odrive-wheel.html` in Node, with the inputs built
+  from its `SCHEMA` (`tests/plugin/WebClientImport.js`). A real browser is no part of it.
 
 ## Details zu 1d
 

@@ -328,12 +328,13 @@ both keep working while values are being read: they end the read, and whatever
 it did not reach stays unread.
 
 Tabs: **Status**, **PSU / Brake**, **Axis**, **Motor**, **Encoder**,
-**Controller** and **Extensions**.
+**Controller**, **Snapshot** and **Extensions**.
 
 **The parameter lists only read.** They send read commands and change nothing
 on the board. The only way to write is the Power / Brake editor described below.
 Editing anything else, clearing errors, erasing the configuration, calibrations,
-the console and import/export are planned (Package 1b).
+the console and import are planned (Package 1b). Export is the
+[catalog snapshot](#catalog-snapshot) below.
 
 Implemented and tested against a simulated board. **Not tested on a real board
 yet.**
@@ -444,6 +445,84 @@ never saves to the board. If you want to keep them, that is **Save to flash** in
 panel, which saves everything currently in RAM. `enable_brake_resistor` takes effect only
 after a reboot, and enabling it without a connected brake resistor can break the power
 supply.
+
+### Catalog snapshot
+
+The **Snapshot** tab reads every value of the plugin's catalog once and keeps the
+result as it was, for export, comparison and a diagnostic report. Nothing is
+written to the board, and nothing is read without a button press.
+
+**What it is and is not.** A catalog snapshot: every value of the plugin's catalog,
+read one after the other from the **RAM** of the board. It is not a complete NVM
+image, not a calibration record and not a restore backup. The values were read at
+different moments between the start and the end time shown, and none of them says
+what is stored in flash. Not included: most FFB settings (only `axis.maxtorque` and
+`fx.master` are in the catalog yet), FFB filters, inputs and GPIO, profiles, the
+plugin settings, the anticogging map and `axis1`.
+
+1. Press **Capture snapshot**. The line next to it shows the progress, **Cancel**
+   ends it. The stop button and **Release port** keep working and end it too.
+2. The summary says how far it got and on which state:
+   - `Catalog snapshot complete`: every path has a usable reply.
+   - `ended with failed values`: it ran to the end, the failed paths are named.
+   - `PARTIAL`: a software stop, **Release port**, a lost or new connection, a new
+     firmware check or **Cancel** ended it, also when that came after the last
+     reply. The values before it are kept, the rest is not read, and nothing is
+     filled in from earlier reads.
+   With a finished software stop and its latch set, a capture still works: it only
+   reads. It never clears the latch, and what the latch blocks stays blocked.
+3. **Precision** follows **Firmware replies**: with `declared complete and exact`
+   every ODrive reply is the value on the board. Without it, floats may be rounded
+   and numbers of 9 or more characters may be cut off, and the snapshot says so.
+
+**Export snapshot…** writes two files next to each other and never replaces one:
+
+| File | Content |
+|---|---|
+| `odrive_config_<time>.json` | The settings as `"path": "value"`, exactly as the board replied, in the format of the web client's export. Status values are not in it. |
+| `odrive_config_<time>.meta.json` | What the values are: catalog version and scope, firmware build, the firmware's declaration, start and end time, port and connection, stop latch, failed and uncertain paths, completeness, status values. It carries the SHA-256 of the values file. |
+
+A partial snapshot gets `_partial` in both names. After writing, the plugin reads
+both files back and loads them like any other file. Only then it says **Exported
+and read back**, otherwise **Export FAILED** and nothing of it stays on disk. The
+web client's import loads the values file as one of its own exports.
+
+**Compare.** Choose a file with **Browse…**:
+
+- **Compare board with file** first captures a new snapshot, through the catalog
+  paths only. The keys of a file are data: they are shown, never sent.
+- **Compare the two files** works offline. It does not touch the connection, also
+  not with the port released.
+
+Settings and status values are listed apart: status values change on their own.
+
+| Result | Meaning |
+|---|---|
+| `same` | The same value by its type, and both sides are certain of it. With `declared complete and exact` on both sides `32.012` and `32.012001` are the same float32. |
+| `same text` | The same text, but one side's precision is not proven. Equal as text, nothing more. |
+| `DIFFERS` | A difference no rounding or cutting can explain. |
+| `unclear` | Different text that may still be the same value on the board. |
+| `only left`, `only right` | One side has no such path. |
+| `not compared` | A side tried to read it and failed. |
+
+Fixed rules: floats compare as float32, +0 and -0 are the same value, two NaN are
+the same, `inf` and `-inf` differ from each other and from every number. Integers
+and error bits compare as whole numbers of any length. Booleans take `0`, `1` and the
+`True`/`False` of older web client files. Without matching metadata, for example a
+file of the web client or a values file that was changed, a file's floats count as
+not proven. A file that is no JSON object, has a key twice, is not UTF-8 or is too
+large is refused with the reason.
+
+**Write diagnostic report…** writes a short Markdown file for an issue: build,
+declaration, the scope of the snapshot, errors in clear text, axis state, bus voltage,
+temperatures with their limits, failed reads and the differences from the last
+compared file. It names no board type, since the firmware reports none (`hw_version`
+reads the same on all supported boards), and it never says that a temperature sensor
+is connected: without a sensor a plausible number can appear, and 0 is also what the
+firmware reports after an invalid reading.
+
+A finished snapshot stays as it is after a disconnect. The tab then says that its
+connection has ended, and it can still be exported.
 
 ---
 

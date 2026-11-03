@@ -26,12 +26,14 @@ Deferred at the user's request. A point stays here until the user has run it, an
 | [PR #6](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/6) | `%.9g` of newlib-nano, values read back on the board |
 | [PR #7](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/7) | Power supply data, reading and writing the ten fields, the `%f` parser behind `w` |
 | [PR #8](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/8) | `sys.capabilities?`, the T3 steps of the PR |
+| [PR #10](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/10), 1b | Catalog snapshot on the board, with and without the stop latch, the export in the web client's import in a real browser, both comparisons, the report's temperatures against a known temperature |
 | `docs/HARDWARE.md` | Support level of each board |
 
 ## Vor jedem Flashen
 
-1. **ODrive-Konfiguration sichern** (Export als JSON. In the plugin planned next, stage 1 of `docs/ROADMAP.md`; bis dahin
-   nur über die lokale Datei `Odrive-Wheel/tools/odrive-wheel.html`).
+1. **ODrive-Konfiguration sichern.** In the plugin: tab Snapshot, **Capture snapshot**, **Export snapshot…**. It is a catalog snapshot
+   of the RAM and no complete backup: FFB settings beyond `axis.maxtorque` and `fx.master`, the profiles and the anticogging map are not in
+   it (`docs/packages/PKG1.md`). Otherwise the export of the local file `Odrive-Wheel/tools/odrive-wheel.html`.
 2. **FFB-Einstellungen und Profile sichern** (Profil-Export).
 3. **Aktuelle Firmware-Datei aufheben** (`odrive-wheel.bin` des zuletzt funktionierenden
    Stands, inklusive Baseline aus Schritt 0).
