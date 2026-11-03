@@ -31,7 +31,7 @@ namespace OdriveWheel.SimHubPlugin.Tests
             using (var rig = new WindowTests.WindowRig())
             {
                 var headers = rig.On(w => w.MainTabs.Items.Cast<System.Windows.Controls.TabItem>().Select(t => (string)t.Header).ToArray());
-                Check.Lines(new[] { "Status", "PSU / Brake", "Axis", "Motor", "Encoder", "Controller", "Extensions" }, headers, "tabs");
+                Check.Lines(new[] { "Status", "PSU / Brake", "Axis", "Motor", "Encoder", "Controller", "Snapshot", "Extensions" }, headers, "tabs");
             }
         }
 

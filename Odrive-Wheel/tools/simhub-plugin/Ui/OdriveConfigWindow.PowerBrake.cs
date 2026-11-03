@@ -327,10 +327,11 @@ namespace OdriveWheel.SimHubPlugin
             // The status timer may not have seen it yet.
             DropReviewIfOutdated(_serial.GetStatus());
             var review = _review;
-            if (review == null || !review.CanApply || _applying || _refreshing || _closed) return;
+            if (review == null || !review.CanApply || _applying || _refreshing || _capturing || _closed) return;
 
             _applying = true;
             SetPowerBrakeEditorEnabled(false);
+            UpdateSnapshotButtons();
             ApplyText.Text = "Applying to RAM…";
             ApplyText.Foreground = BrushNeutral;
 
@@ -354,7 +355,11 @@ namespace OdriveWheel.SimHubPlugin
                 foreach (var change in review.Changes) _reader.Invalidate(change.Parameter);
                 _review = null;
                 _applying = false;
-                if (!_closed) SetPowerBrakeEditorEnabled(true);
+                if (!_closed)
+                {
+                    SetPowerBrakeEditorEnabled(true);
+                    UpdateSnapshotButtons();
+                }
             }
 
             if (result == null || _closed) return;

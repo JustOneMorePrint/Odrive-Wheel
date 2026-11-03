@@ -59,6 +59,7 @@ namespace OdriveWheel.SimHubPlugin
 
             StopDisclaimerText.Text = OdriveStatusText.StopDisclaimer;
             BuildParameterTabs(catalog);
+            BuildSnapshotTab(catalog);
             BuildExtensionsTab(featurePanels ?? FeaturePanels.All);
             UpdateStatus();
 
@@ -136,6 +137,7 @@ namespace OdriveWheel.SimHubPlugin
             UpdateCapabilityStatus(status);
             UpdateParameterRows(status);
             DropReviewIfOutdated(status);
+            UpdateSnapshotAge(status);
         }
 
         private void UpdateCapabilityStatus(SerialStatus status)
