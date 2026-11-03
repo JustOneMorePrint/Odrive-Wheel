@@ -5,9 +5,16 @@ flowing in the motor windings — and which parameters affect each stage.
 
 This is the mode the wheel uses (`axis0.controller.config.control_mode = 1`).
 In this mode the position/velocity PID loops are bypassed: `input_torque_`
-goes straight through to the current controller. **PID gains
-(`pos_gain`, `vel_gain`, `vel_integrator_*`) are ignored in this mode** —
-see the warning in the Controller tab.
+goes through torque limiting to the current controller. Position and velocity
+tracking gains are not the main torque-control loop. **Exception:** `vel_gain`
+is used by the torque-mode velocity limiter when `enable_torque_mode_vel_limit`
+is enabled. The input mode and enabled limits must be considered as well.
+
+This document describes the firmware's control path. Some UI names come from
+the inherited local web reference; current SimHub features and planned tuning
+functions are listed in [the roadmap](ROADMAP.md). Measurement limits are in
+[MEASUREMENT.md](MEASUREMENT.md), hardware and motor-data requirements in
+[HARDWARE.md](HARDWARE.md).
 
 ## Pipeline overview
 
@@ -70,14 +77,14 @@ return std::clamp(max_torque, 0.0f, config_.torque_lim);
 
 1. `motor.config.current_lim`
 2. `max_allowed_current_` (derived from `requested_current_range` and shunt amp gain)
-3. Motor thermistor current limit (derates near `inverter_temp_limit_*`)
-4. FET thermistor current limit
+3. Enabled motor thermistor current limit (`motor.motor_thermistor.config.temp_limit_*`)
+4. Enabled FET thermistor current limit (`motor.fet_thermistor.config.temp_limit_*`)
 
 | Parameter | Effect |
 |---|---|
-| `motor.config.current_lim` | **Primary current cap** in A. Defines the main torque ceiling. Start low (10 A) and increase. |
+| `motor.config.current_lim` | **Primary phase-current cap** in A. Defines a torque ceiling with Kt; choose it from the motor and board data, not the PSU's DC current alone. |
 | `motor.config.torque_lim` | Hard torque cap in Nm. `inf` = only constrained by `current_lim × Kt`. |
-| `motor.config.current_lim_margin` | Safety margin in A between `current_lim` and the hardware over-current trip. Typical 8–10 A. |
+| `motor.config.current_lim_margin` | Measured-current allowance above `current_lim` before `CURRENT_LIMIT_VIOLATION`; it is not the independent hardware over-current threshold. |
 | `motor.config.requested_current_range` | Range used to set the shunt amplifier gain. Must be ≥ `current_lim + current_lim_margin`. Higher → less precision but more headroom. |
 
 ### 🔵 Torque ↔ Current conversion
@@ -91,7 +98,7 @@ iq = torque / config_.torque_constant;
 
 | Parameter | Effect |
 |---|---|
-| `motor.config.torque_constant` | **Most critical conversion factor**, in Nm/A. Wrong value means actual torque ≠ requested torque. Compute as `8.27 / motor_kv`. Typical: 0.87 for 18 Nm BLDC servo, ~0.55 for hoverboard motors. |
+| `motor.config.torque_constant` | Torque conversion in Nm/A using ODrive's current convention. Wrong Kt makes commanded Nm inaccurate. Use motor data with explicit RMS/peak and phase/line conventions; `8.27 / Kv` applies only when the Kv definition matches the expected convention. See the planned Kt wizard in `packages/PKG1.md`. |
 
 ### 🔴 FOC current loop — where the "feel" comes from
 
@@ -106,15 +113,15 @@ i_gain     = plant_pole × p_gain
 
 | Parameter | Effect |
 |---|---|
-| `motor.config.current_control_bandwidth` | **Closed-loop PI bandwidth in rad/s.** This is the most important knob for FFB feel. Range 100–2000. High → fast/electric/aggressive response. Low → smooth/mechanical/filtered feel. |
+| `motor.config.current_control_bandwidth` | **Closed-loop PI bandwidth in rad/s.** It sets gains derived from R and L. Suitable values depend on motor parameters, sampling and stability; there is no validated universal range for all target motors. Hz = rad/s / (2π). |
 | `motor.config.phase_resistance` | Ω. Measured by `MOTOR_CALIBRATION` (state 4). Feeds into `i_gain` and the R-feed-forward term. Wrong value → ringing or sluggish response. |
 | `motor.config.phase_inductance` | H. Measured by `MOTOR_CALIBRATION`. Feeds into `p_gain` and the wL-feed-forward term. |
 
 ### 🟣 Feed-forward — compensates back-EMF and resistive drop
 
-Without feed-forward the PI loop alone has to react to these disturbances,
-producing perceptible lag. Feed-forward injects them into the voltage
-command directly:
+Feed-forward injects modelled resistive, inductive and back-EMF terms into
+the voltage command, reducing the correction left to the PI loop when the
+motor model is accurate. Its effect on response and noise must be measured:
 
 ```cpp
 // motor.cpp:616-635
@@ -131,8 +138,8 @@ if (bEMF_FF_enable) {
 
 | Parameter | Effect |
 |---|---|
-| `motor.config.R_wL_FF_enable` | Adds resistive + inductive feed-forward. **Recommended True** for any setup. |
-| `motor.config.bEMF_FF_enable` | Adds back-EMF feed-forward. Reduces lag at high velocity. **Only enable after `torque_constant` is confirmed correct** — otherwise it injects noise. |
+| `motor.config.R_wL_FF_enable` | Adds resistive + inductive feed-forward. Evaluate with reliable R/L data and compare current response and noise. |
+| `motor.config.bEMF_FF_enable` | Adds back-EMF feed-forward. Requires a reliable torque constant and pole-pair count; compare its effect over the intended speed range. |
 | `motor.config.pole_pairs` | Used in the bEMF feed-forward calculation. Wrong value distorts the term. |
 
 ### ⚫ DC bus + thermal limits — additional caps on top torque
@@ -142,33 +149,39 @@ the final output:
 
 | Parameter | Effect |
 |---|---|
-| `motor.config.inverter_temp_limit_lower` | °C where current starts derating linearly. Default 100. |
-| `motor.config.inverter_temp_limit_upper` | °C where ODrive disarms with `INVERTER_OVER_TEMP`. Default 120. |
+| `motor.fet_thermistor.config.temp_limit_lower`, `_upper` | With the sensor limiter enabled, current derates between these temperatures and reaches zero at upper; `FET_THERMISTOR_OVER_TEMP` is raised at upper + 5 °C. |
+| `motor.motor_thermistor.config.temp_limit_lower`, `_upper` | Corresponding motor-sensor limits, with `MOTOR_THERMISTOR_OVER_TEMP` at upper + 5 °C. Sensor plausibility and suitable motor limits must be established separately. |
 | `config.dc_max_positive_current` | A — max current drawn from the PSU. If exceeded, vbus sags, modulation saturates, possible disarm. |
 | `config.dc_max_negative_current` | A — max regen current returned to PSU. If exceeded, brake saturates or OVP triggers. |
 | `config.dc_bus_overvoltage_trip_level` | V — vbus ceiling. Exceeded during regen → `DC_BUS_OVER_VOLTAGE` and disarm. |
 | `motor.config.I_bus_hard_max` / `I_bus_hard_min` | Hard limits on motor DC bus current (consumption / regen). |
+
+The older `motor.config.inverter_temp_limit_lower` and `_upper` fields are
+listed as **not implemented** in the firmware interface. They do not configure
+the thermistor limiters above. A plausible temperature or HID validity flag
+does not prove a physical sensor is connected; see [HARDWARE.md](HARDWARE.md).
 
 ## Practical tuning order
 
 When setting up a new motor from scratch, prioritize these parameters in
 this order:
 
-1. **`torque_constant`** — fundamental. If wrong, every downstream value
-   is miscalibrated. Use `8.27 / motor_kv` from the datasheet, or measure
-   with a torque sensor against known current.
+1. **`torque_constant`** — establish its value and current convention from
+   motor data or a suitable measurement. The Kt/Kv/Ke conversions require
+   matching definitions; a number copied from another motor is not evidence.
 2. **`phase_resistance` + `phase_inductance`** — measured automatically by
    `MOTOR_CALIBRATION` (state 4). Without these, the PI gains are wrong.
-3. **`current_lim`** — start conservative (10 A) to avoid frying the motor
-   or PSU. Increase gradually.
-4. **`current_control_bandwidth`** — pick based on motor type:
-   - Industrial servo BLDC (low inductance): 1000 Hz works well
-   - Hoverboard (high inductance): 200–500 Hz
-   - Gimbal motors (very low torque, high R): 100–300 Hz
-5. **`R_wL_FF_enable = True`** — almost always helps, low risk.
+3. **`current_lim`** — choose a reduced starting limit from the actual motor,
+   board and mechanical setup. There is no universal starting current.
+4. **`current_control_bandwidth`** — enter rad/s, keeping the Hz conversion
+   visible. For example, 1000 rad/s is about 159 Hz; this is a unit example,
+   not a recommended setting. Compare current response, overshoot and noise
+   before increasing bandwidth for a particular motor.
+5. **`R_wL_FF_enable`** — compare enabled and disabled with reliable R/L data.
 6. **`axis.maxtorque`** (FFB layer) — converts the internal cap into the
-   game's torque request. Start at 3 Nm and ramp up.
-7. **`bEMF_FF_enable = True`** — only after `torque_constant` is confirmed.
+   game's torque request. Choose a reduced limit suitable for this setup;
+   commanded Nm are only as accurate as the motor model.
+7. **`bEMF_FF_enable`** — evaluate only after Kt and pole pairs are established.
 8. **`axis.maxtorquerate`** — only if you feel transients are too aggressive.
    Default 0 (off).
 
@@ -180,11 +193,11 @@ this order:
 | High-frequency vibration when torque is high | `current_control_bandwidth` too high or `phase_inductance` mismeasured |
 | Torque clips at some level regardless of game request | Effective current limit (check `current_lim`, thermal limits, `requested_current_range`) |
 | FFB feels laggy | Bandwidth too low, or feed-forward disabled |
-| ODrive disarms with `MODULATION_MAGNITUDE` error | Vbus too low for the requested peak torque → reduce `current_lim` or use higher-voltage PSU |
+| ODrive disarms with `MODULATION_MAGNITUDE` error | Check voltage headroom, speed, motor parameters and current demand within the verified board, supply and motor limits |
 | ODrive disarms with `DC_BUS_OVER_CURRENT` | `dc_max_positive_current` or `I_bus_hard_max` too tight |
-| Disarm with `DC_BUS_OVER_VOLTAGE` during heavy regen | Brake resistor undersized, or `dc_bus_overvoltage_trip_level` too low |
+| Disarm with `DC_BUS_OVER_VOLTAGE` during heavy regen | Check regeneration absorption, brake-resistor limits and the configured trip level against the actual hardware ratings |
 
-## Live diagnostics (Debug tab)
+## Diagnostic fields
 
 Watch these fields while the wheel is moving / under FFB load:
 
@@ -216,14 +229,15 @@ These exist in the SCHEMA but are bypassed by the firmware in this mode
 - `circular_setpoints` and related
 - `homing_speed` / mirror options
 
-For the FFB use case these knobs are inert and changing them has no
-observable effect on motor behavior.
+Their effect depends on the selected control/input mode and enabled limiters.
+In particular, `vel_gain` can affect the torque-mode velocity limiter even
+though the normal velocity tracking loop is not active.
 
 ## References
 
-- `ODrive-fw-v0.5.6/Firmware/MotorControl/controller.cpp` — torque setpoint
+- `ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/controller.cpp` — torque setpoint
   clamping, control mode dispatch
-- `ODrive-fw-v0.5.6/Firmware/MotorControl/motor.cpp` — torque-to-current
+- `ODrive-fw-v0.5.6/ODrive-fw-v0.5.6/Firmware/MotorControl/motor.cpp` — torque-to-current
   conversion, current PI loop tuning, feed-forward
 - `Odrive-Wheel/src/ffb_task.cpp` — `setEffectTorque()` and `update()`,
   where the FFB-side caps and `pending_torque_` are computed

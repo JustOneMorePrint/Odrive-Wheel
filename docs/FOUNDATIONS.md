@@ -22,9 +22,10 @@ writing function arrives, the steps they share move into something all use. No f
 
 An operation is anything of more than one step, or anything that changes the board.
 
-**Connection.** Everything is bound to a `ConnectGeneration`. After a disconnect, a released port or a reconnect, what
-was read, reviewed or declared on the old connection counts for nothing and is never upgraded. A request of an old
-connection does not reach a new one, and a late reply does not count for it.
+**Connection.** Live values and operations are bound to a `ConnectGeneration`. After a disconnect, a released port or a
+reconnect, earlier reads, reviews and declarations cannot authorize a new operation or describe the board's current state.
+A request of an old connection does not reach a new one, and a late reply does not count for it. A finished immutable
+snapshot remains a historical record with its original connection and evidence; it is never upgraded to a newer connection.
 
 **Stop.** The software stop goes ahead of everything, and never depends on an operation finishing. It sets the latch.
 What the latch blocks stays blocked until the user clears it. An operation that began before a stop stays ended after
@@ -36,16 +37,18 @@ readback share. An operation rests on one state of that check. A new state ends 
 **Start.** An operation begins bound to the connection, the stop state and the capability state it was prepared on. It
 reads again what it rests on, and refuses if that changed.
 
-**Abort.** Stop, connection, capability state, firmware refusal, a closing window, or a result it cannot confirm. Each
-ends the operation, and the worker holds back any line still queued. A stop or state change in the instant between the
+**Abort.** Stop, connection, capability state, cancellation or a closing window ends an active operation, and the worker
+holds back any line still queued. For operations with dependent writes, a firmware refusal or an unconfirmed result also
+ends the operation. A read-only snapshot may instead record failed or unsupported reads and continue under its explicit
+capture contract; it never substitutes an expected or cached value. A stop or state change in the instant between the
 worker's last check and the line cannot call that line back. It is then named as sent.
 
 **Partial changes.** What already went out stays and is named, value by value. There is no automatic rollback and no
 automatic retry. Going back is a new operation the user starts, with its own review.
 
-**Unclear results.** `sent, not verified` is a result of its own. It ends the operation, because the next step would
-rest on something only assumed. The plugin never guesses, never fills in the expected value, and never shows an unclear
-value as current.
+**Unclear results.** `sent, not verified` is a result of its own. It ends dependent writes, because the next step would
+rest on something only assumed. A read-only snapshot names read failures and uncertainty in its result and exports.
+The plugin never guesses, never fills in the expected value, and never shows an unclear value as verified.
 
 ## States of a value
 

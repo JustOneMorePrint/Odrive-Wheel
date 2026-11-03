@@ -1,5 +1,9 @@
 # Tutorial — Tuning the wheel feeling
 
+> **Legacy reference:** this tutorial describes the upstream HTML tools, not the current SimHub interface. Its examples and performance
+> claims are not validated defaults for this fork. Use [Hardware](HARDWARE.md), [Measurement](MEASUREMENT.md),
+> [Testing](TESTING.md) and the [roadmap](ROADMAP.md) for the current contract. Hardware tests remain deferred.
+
 <sub>🇧🇷 [Ler em português](TUNING_FEELING_PT.md)</sub>
 
 Practical guide to tune the wheel "feel" using the built-in tools — from Performance Test, through the motor filters (CF/Damper/Friction/Inertia) and ending on the FFB effects the game sends (Constant Force, Spring, Damper, Friction).

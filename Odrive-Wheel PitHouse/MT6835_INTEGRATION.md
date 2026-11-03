@@ -1,5 +1,9 @@
 # Intégration MT6835 — SPI absolu 21 bits
 
+> **Historical integration reference:** this document describes the original encoder branch and its reported ODESC bench results.
+> It does not establish compatibility or hardware validation for this fork. Use [Hardware](../docs/HARDWARE.md),
+> [Roadmap](../docs/ROADMAP.md) and [Testing](../docs/TESTING.md) for the current targets and open checks.
+
 Référence d'intégration pour ajouter l'encodeur **MagnTek MT6835** (21 bits, lecture SPI absolue) au firmware Odrive-Wheel et à une interface de configuration.
 
 - **Cible matérielle de référence** : ODESC V4.2 (clone ODrive v3.6, STM32F405). Compatible MKS XDrive Mini.

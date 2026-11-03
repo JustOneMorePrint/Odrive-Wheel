@@ -310,7 +310,6 @@ ob `%.9g` in newlib-nano dieselben Texte liefert und ob die Werte dort wirklich 
   version gives telemetry at about 10 Hz, a license 60 Hz. Direct game readers in the plugin would be faster.
 - **Left over:** `fx.master` is stored at `0x04F0`, but the address is missing from `VirtAddVarTab`, so it is lost at a page transfer. A small PR
   of its own, after asking.
-- **Left over:** `docs/TORQUE_CONTROL.md` gives current bandwidths in Hz, the parameter is rad/s.
 - **Left over:** `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, the same as a real 0 °C.
 - **Left over:** the comment in `Odrive-Wheel/Makefile` says "OVP trip = 59.92V". The trip level defaults to 30 V, 59.92 V is the default of the ramp.
 - **Left over:** `EffectsCalculator::saveFlash()` ignores its `Flash_Write` results. `sys.save!` and `sys.savestat?` therefore do not report all

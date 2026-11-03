@@ -7,8 +7,11 @@ and mappable actions for dashboards and button-box control.
 
 > **What is Odrive-Wheel?** An open direct-drive sim racing wheel firmware
 > that combines the ODrive motor controller with OpenFFBoard's Force
-> Feedback stack, running on the MKS XDrive Mini or ODESC V4.2 boards.
-> Repo: <https://github.com/eagabriel/Odrive-Wheel>
+> Feedback stack. This fork targets MKS XDrive Mini, MKS XDrive S and MKS XDrive;
+> only the Mini build currently exists, with hardware checks still open.
+> Repo: <https://github.com/JustOneMorePrint/Odrive-Wheel>
+> Support levels and upstream attribution: [repository README](../../../README.md)
+> and [hardware](../../../docs/HARDWARE.md).
 
 ---
 
@@ -61,10 +64,11 @@ and mappable actions for dashboards and button-box control.
 - **SimHub 9.x** installed at `C:\Program Files (x86)\SimHub` (or point
   the build to a custom install path)
 - **.NET Framework 4.8 runtime** (included with Windows 10 1903+ and Windows 11)
-- An **Odrive-Wheel board** running firmware **v1.3 or newer** —
-  identifiable in Windows Device Manager as HID `VID_1209&PID_0D40`.
-  Older firmware (v1.1/1.2) works too, but temperature and error
-  fields stay empty.
+- An appropriate **Odrive-Wheel firmware build for the board**; the HID device
+  identifies as `VID_1209&PID_0D40`. Telemetry depends on the fields actually
+  present in its HID reports. Precise serial reads and editor functions depend on
+  the firmware's `sys.capabilities?` declaration, not `sys.swver` or a release label.
+  See [hardware support](../../../docs/HARDWARE.md) before choosing a build.
 
 ---
 
@@ -73,8 +77,9 @@ and mappable actions for dashboards and button-box control.
 ### Option A — Prebuilt DLL
 
 1. Grab `OdriveWheel.SimHubPlugin.dll` from the
-   [Odrive-Wheel Releases page](https://github.com/eagabriel/Odrive-Wheel/releases).
-   (SimHub already ships `HidSharp.dll` — the plugin reuses it.)
+   [this fork's Releases page](https://github.com/JustOneMorePrint/Odrive-Wheel/releases),
+   when a release includes it. Otherwise build this fork from source. SimHub already
+   ships `HidSharp.dll`; the plugin reuses it.
 2. Close SimHub (right-click the tray icon → *Exit* to be sure).
 3. Copy the DLL into `C:\Program Files (x86)\SimHub`.
 4. Start SimHub. On first launch it detects the new DLL and asks
@@ -89,7 +94,7 @@ the reference assemblies otherwise.
 Close SimHub first, it locks the DLL.
 
 ```bash
-cd tools/simhub-plugin
+cd Odrive-Wheel/tools/simhub-plugin
 dotnet build -c Release
 ```
 
@@ -295,9 +300,10 @@ dropdown lists every file whose top level has
 
 - **▶ Apply selected profile** — writes every field of the profile to
   the board via serial. RAM-only.
-- **💾 Save to flash (sys.save! + ss)** — persists via `sys.save!`
-  (OpenFFBoard params to emulated EEPROM) and `ss` (ODrive config to
-  NVM). The board **reboots**; FFB drops for ~1–2 s. Confirmation dialog.
+- **💾 Save to flash (sys.save! + ss)** — requests the FFB save and, after its
+  `OK`, sends the ODrive save. The latter may reboot the board. A confirmation
+  dialog is shown; sending the commands is not proof of persistence. See
+  [Save to flash](#save-to-flash).
 - **↻** next to the dropdown re-scans the folder.
 
 ### AUTOMATIC PER-GAME
@@ -567,16 +573,20 @@ expressions (e.g., `[OdriveWheel.SimHubPlugin.WheelPositionDeg]`).
 | `IBusCurrentA` | double | DC bus current |
 | `BrakeResistorCurrentA` | double | Regen current through the brake resistor |
 
-### Temperatures (from HID, firmware ≥ 1.2)
+### Temperatures (when present in the HID report)
 
 | Property | Type | Description |
 |---|---|---|
-| `FetTempC` | double | FET/inverter °C (NaN if no sensor) |
-| `MotorTempC` | double | Motor °C (NaN if no sensor) |
-| `FetTempValid` | bool | true iff FET thermistor present |
-| `MotorTempValid` | bool | true iff motor thermistor present |
+| `FetTempC` | double | Reported FET/inverter °C; NaN for an absent field or invalid sentinel |
+| `MotorTempC` | double | Reported motor °C; NaN for an absent field or invalid sentinel |
+| `FetTempValid` | bool | HID field is available and not `-128`; no proof of sensor presence |
+| `MotorTempValid` | bool | HID field is available and not `-128`; no proof of sensor presence |
 
-### ODrive state & errors (from HID, firmware ≥ 1.3)
+A missing or disabled sensor can still produce a plausible number. These flags
+describe the HID field, not a verified physical sensor. See
+[temperature limitations](../../../docs/HARDWARE.md#temperature-sensors).
+
+### ODrive state & errors (when present in the HID report)
 
 | Property | Type | Description |
 |---|---|---|
@@ -750,10 +760,11 @@ inc/dec triggers.
 
 The **💾 Save to flash** button runs two commands in sequence:
 
-1. `sys.save!` — persists FFB parameters (all `axis.*`, `fx.*`) into
-   the OpenFFBoard's emulated EEPROM. Non-destructive.
-2. `ss` — persists ODrive config (`config.*`, `axis0.motor.*`,
-   `axis0.encoder.*`) into flash NVM and **reboots the board**.
+1. `sys.save!` — requests saving the supported FFB settings into the
+   OpenFFBoard emulated EEPROM in S1+S2. Some effect and filter writes do not
+   report their failures, so `OK` does not prove that every setting was stored.
+2. `ss` — requests saving the ODrive configuration into NVM in S10+S11.
+   If accepted, it **reboots the board even when storing the configuration failed**.
    Sent only after `sys.save!` has answered `OK`. On an error, a timeout,
    a lost connection or a software stop the plugin shows the error and
    sends no `ss`, without retrying.
@@ -761,16 +772,19 @@ The **💾 Save to flash** button runs two commands in sequence:
 FFB drops for ~1–2 seconds during the reboot. Don't do this mid-race.
 A confirmation dialog protects against accidental clicks.
 
-If you only edited FFB/EQ parameters (not motor calibration), the
-reboot is technically unnecessary — but the plugin runs both for
-simplicity and matches what the HTML tool's unified Save button does.
+The panel requests both stores even if only FFB settings changed. They are
+separate stores: success reported for one says nothing about the other.
 
-**Known limit:** `ss` has no reply, and the firmware ignores it while the motor
-is armed. The status line can therefore only say that `ss` was sent, not that
-the ODrive config was saved; a reboot of the board is the only sign that it
-took effect. The ODrive editor (planned, Package 1b) will handle this properly;
-until then set the axis to IDLE first if you changed ODrive values. After a
-[software stop](#software-stop), `ss` is refused until you press **Clear stop**.
+**Known limits:** `ss` has no reply and is ignored while a motor is armed.
+The status line can say it was sent, not that the configuration was saved.
+Neither `sys.save!` returning `OK` nor a reboot confirms persistence: only
+reading back the intended values after a reboot can do that. The current panel
+does not perform that persistence verification. See
+[save states](../../../docs/FOUNDATIONS.md#states-of-a-value).
+
+Use the save workflow only with the axes inactive. After a
+[software stop](#software-stop), `ss` remains blocked until **Clear stop**;
+clearing that latch is a deliberate user action, never an automatic save step.
 
 ---
 
@@ -817,8 +831,8 @@ if you're not sure a file was found.
   `VID_1209 PID_0D40`. Unplug/replug. If Windows still shows it as
   "Unknown device", replug into a different USB port (some hubs are
   flaky for HID devices).
-- Older firmware without the extended report (< v1.2). Basic telemetry
-  still works.
+- A firmware report without some extended fields leaves those values
+  unavailable; a software version label alone does not prove field support.
 - Another app has the device in exclusive mode (rare — DirectInput
   games don't exclusive-lock the FFB device).
 
@@ -880,9 +894,9 @@ reply channel is stuck.
 
 ### Live readings show but AxisError never has a value
 
-- The board is on firmware v1.2 or older, which doesn't include the
-  error fields in the HID report. Errors default to 0 / `AnyError=false`.
-  Everything else works.
+- The firmware report may omit error fields. In that case the older telemetry
+  properties default to 0 / `AnyError=false`; those defaults do not prove that
+  the board has no error. Use the serial status tab when available.
 
 ---
 
@@ -935,6 +949,6 @@ button-mapped inc/dec, per-game profile switching.
 
 ## License
 
-MIT. Part of the [Odrive-Wheel](https://github.com/eagabriel/Odrive-Wheel)
-project. Firmware, HTML configurator, and this plugin share the same
-license.
+The plugin retains its existing MIT notice. This does not assign the same
+license to the firmware or bundled components. See the
+[repository README](../../../README.md) for codebase attribution and licensing.
