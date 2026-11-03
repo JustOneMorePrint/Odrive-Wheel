@@ -35,6 +35,15 @@ namespace OdriveWheel.SimHubPlugin
         public static string OffbWrite(string path, string value)   => path + "=" + value;
         public static string OffbExec(string path)                  => path + "!";
 
+        /// <summary>True only for a read of one valid path in either dialect, nothing else on the line.</summary>
+        public static bool IsReadLine(string line)
+        {
+            if (line == null) return false;
+            if (line.StartsWith("r ", StringComparison.Ordinal)) return IsValidPath(line.Substring(2));
+            return line.EndsWith("?", StringComparison.Ordinal) && IsValidPath(line.Substring(0, line.Length - 1))
+                && line.IndexOf('.') > 0;
+        }
+
         /// <summary>What an OpenFFBoard reply to this line starts with. A write echo is only
         /// compared up to the '=', because the firmware may cut long values.</summary>
         public static string OffbEcho(string path, char kind) => "[" + path + kind;

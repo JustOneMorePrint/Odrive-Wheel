@@ -398,15 +398,17 @@ namespace OdriveWheel.SimHubPlugin
                 return new SerialResult(SerialOutcome.Timeout, detail: "expired in the queue");
             if (_stopLatched && OdriveCommandGuard.IsBlockedWhileStopped(request.Line))
                 return new SerialResult(SerialOutcome.BlockedByStop, detail: "blocked by the software stop");
-            return ContextRefusal(request.Context);
+            return ContextRefusal(request.Context, request.Line);
         }
 
         // Only this thread opens a connection, so the generation cannot change between here and the line.
         // A stop requested in that instant cannot call the line back, its own lines follow right behind it.
-        private SerialResult ContextRefusal(SerialOperationContext context)
+        private SerialResult ContextRefusal(SerialOperationContext context, string line)
         {
             if (context == null) return null;
-            if (context.BindsStop && (_stopLatched || _lastStop != context.LastStop))
+            if (context.ReadsOnly && !OdriveProtocol.IsReadLine(line))
+                return new SerialResult(SerialOutcome.Cancelled, detail: "only reads belong to this operation, not sent");
+            if (context.BindsStop && (_stopLatched != context.StopLatched || _lastStop != context.LastStop))
                 return new SerialResult(SerialOutcome.BlockedByStop, detail: "software stop, not sent");
             if (Volatile.Read(ref _generation) != context.ConnectGeneration)
                 return new SerialResult(SerialOutcome.NotConnected, detail: "the connection changed, not sent");
