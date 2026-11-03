@@ -1,6 +1,8 @@
-# Odrive-Wheel SimHub plugin
+# ADDD SimHub plugin
 
-A SimHub plugin for Odrive-Wheel telemetry and configuration. Live telemetry
+<img src="../../../assets/branding/addd-blue-512.png" alt="ADDD logo" width="128">
+
+A SimHub plugin for ADDD telemetry and configuration. Live telemetry
 comes from the firmware's 1 kHz HID input reports; the serial service provides
 profiles, the software stop, the configuration window and catalog snapshots.
 HID telemetry uses the fields actually present in the report. Configuration

@@ -1,5 +1,9 @@
 # ADDD
 
+<p align="center">
+  <img src="assets/branding/addd-blue-512.png" alt="ADDD logo" width="224">
+</p>
+
 **Another DIY Direct Drive (Wheel)**
 
 Firmware and SimHub tools for DIY direct-drive racing wheels built from hoverboard or industrial servo motors.

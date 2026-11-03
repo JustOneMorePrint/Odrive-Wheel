@@ -1,11 +1,13 @@
-# Odrive-Wheel SimHub Plugin — User Manual
+# ADDD SimHub Plugin — User Manual
 
-This plugin brings your Odrive-Wheel board into SimHub. It reads live
+<img src="../../../assets/branding/addd-blue-512.png" alt="ADDD logo" width="128">
+
+This plugin brings your ADDD wheel into SimHub. It reads live
 telemetry over USB HID at the firmware's native 1 kHz rate, syncs FFB
 tuning parameters over serial, and exposes everything as SimHub properties
 and mappable actions for dashboards and button-box control.
 
-> **What is Odrive-Wheel?** An open direct-drive sim racing wheel firmware
+> **What is ADDD?** Another DIY Direct Drive (Wheel), an independently developed fork of Odrive-Wheel
 > that combines the ODrive motor controller with OpenFFBoard's Force
 > Feedback stack. This fork targets MKS XDrive Mini, MKS XDrive S and MKS XDrive;
 > only the Mini build currently exists, with hardware checks still open.
