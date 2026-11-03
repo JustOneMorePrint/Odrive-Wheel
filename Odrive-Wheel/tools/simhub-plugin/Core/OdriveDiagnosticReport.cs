@@ -54,7 +54,7 @@ namespace OdriveWheel.SimHubPlugin
                      + ". Hardware version as reported: " + report.Version("hw_version_major", "hw_version_minor", "hw_version_variant")
                      + ". It does not identify the board: the supported boards all report the same.");
             Item(text, "Serial number: " + report.Value("serial_number") + ". User config loaded: " + report.Value("user_config_loaded") + ".");
-            Item(text, "Replies: " + OdriveSnapshotText.Precision(snapshot.Capabilities) + ".");
+            Item(text, "Replies: " + OdriveSnapshotText.Precision(snapshot.Capabilities) + ". " + OdriveSnapshotText.NotExact(snapshot));
 
             Section(text, "Errors");
             foreach (var path in ErrorPaths) Item(text, path + ": " + report.Value(path));
@@ -84,8 +84,6 @@ namespace OdriveWheel.SimHubPlugin
                 var paths = group.Select(e => e.Path).ToList();
                 Item(text, group.Key + ": " + string.Join(", ", paths.Take(12)) + (paths.Count > 12 ? " and " + (paths.Count - 12) + " more" : ""));
             }
-            if (snapshot.UncertainCount > 0)
-                Item(text, snapshot.UncertainCount + " values may be rounded or cut off, the metadata of an export lists them.");
 
             Section(text, "Differences");
             if (comparison == null)

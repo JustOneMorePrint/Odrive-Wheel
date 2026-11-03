@@ -74,9 +74,19 @@ namespace OdriveWheel.SimHubPlugin
             if (state != FirmwareCapabilityState.Declared)
                 return "not proven: the firmware declared nothing, floats may be rounded and long numbers cut off";
             if (asciiFull && float32RoundTrip)
-                return "exact: the firmware declared '" + declaration + "' on that connection";
+                return "ODrive replies exact, the firmware declared '" + declaration + "' on that connection. OpenFFBoard floats are not covered";
             return "not proven: the firmware declared '" + declaration + "', "
                  + (asciiFull ? "whole numbers but no exact floats" : "no whole numbers");
+        }
+
+        /// <summary>The values that are not exact, by name where there are few.</summary>
+        public static string NotExact(CatalogSnapshot snapshot)
+        {
+            var uncertain = snapshot.Entries.Where(e => e.HasValue && e.Certainty != ReplyCertainty.Exact).ToList();
+            if (uncertain.Count == 0) return "Every value read is exact.";
+            if (uncertain.Count > 6) return "Not exact: " + uncertain.Count + " values, the metadata of an export names each with its reason.";
+            return "Not exact: " + string.Join("; ", uncertain.Select(e => e.Path + " " + CertaintyName(e.Certainty) + ", "
+                 + OdriveReplyCertainty.Reason(e.Definition, e.Certainty, snapshot.Capabilities.AsciiFull, snapshot.Capabilities.Float32RoundTrip))) + ".";
         }
 
         public static string MetadataNote(LoadedSnapshotFile file)
@@ -112,8 +122,7 @@ namespace OdriveWheel.SimHubPlugin
             text.AppendLine("Read from RAM between " + Time(snapshot.StartedUtc) + " and " + snapshot.EndedUtc.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)
                           + ", one value after the other, on " + (snapshot.PortName ?? "the port") + " (connection " + snapshot.ConnectGeneration + ")"
                           + (snapshot.StopLatched ? ", with the software stop latch set." : "."));
-            text.AppendLine("Precision: " + Precision(snapshot.Capabilities) + "."
-                          + (snapshot.UncertainCount > 0 ? " " + snapshot.UncertainCount + " values may be rounded or cut off." : ""));
+            text.AppendLine("Precision: " + Precision(snapshot.Capabilities) + ". " + NotExact(snapshot));
             foreach (var entry in snapshot.Entries.Where(e => !e.HasValue && e.Outcome != SnapshotReadOutcome.NotRead))
                 text.AppendLine("  " + entry.Path + ": " + Outcome(entry));
             text.Append("Not a complete NVM image and no calibration or restore backup. Nothing was written to the board.");

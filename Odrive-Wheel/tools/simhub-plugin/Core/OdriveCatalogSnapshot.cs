@@ -211,6 +211,19 @@ namespace OdriveWheel.SimHubPlugin
                     return asciiFull || reply.Length < OdriveProtocol.OdriveReadLimit ? ReplyCertainty.Exact : ReplyCertainty.MayBeCutOff;
             }
         }
+
+        /// <summary>Why a reply is not exact, in words. Null for an exact one.</summary>
+        public static string Reason(ParameterDefinition definition, ReplyCertainty certainty, bool asciiFull, bool float32RoundTrip)
+        {
+            if (certainty == ReplyCertainty.Exact) return null;
+            if (definition == null) return "not in the catalog, its type is not known";
+            if (definition.Protocol == FieldProtocol.Openffb)
+                return "its OpenFFBoard handler prints a fixed number of decimals, the firmware's declaration covers r replies only";
+            if (certainty == ReplyCertainty.MayBeCutOff)
+                return "the firmware does not declare whole replies, older firmware cut them at 9 characters";
+            return asciiFull && !float32RoundTrip ? "the firmware declares whole replies, but no exact floats"
+                                                  : "the firmware does not declare exact floats";
+        }
     }
 
     /// <summary>
@@ -309,8 +322,8 @@ namespace OdriveWheel.SimHubPlugin
             {
                 var (entries, abortReason) = await ReadAll(binding, evidence, progress, operation.Token).ConfigureAwait(false);
 
-                // The last reply is no proof that the capture still stood when it ended.
-                abortReason = abortReason ?? FinishedOn(WhyEnded(binding, CancellationToken.None));
+                // The last reply is no proof that the capture still stood when it ended. A cancel counts until here as well.
+                abortReason = abortReason ?? FinishedOn(WhyEnded(binding, operation.Token));
 
                 return new CatalogSnapshot(entries, started, _utcNow(), status.PortName, binding.Generation, binding.StopLatched,
                                            binding.LastStop?.State, evidence, abortReason, _catalog.Version, _catalog.Sha256);
@@ -336,8 +349,8 @@ namespace OdriveWheel.SimHubPlugin
                 var result = await _parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Batch, cancellation, context)
                                               .ConfigureAwait(false);
 
-                // A reply only speaks for this capture if it still stands now that the reply is here.
-                var ended = WhyEnded(binding, CancellationToken.None);
+                // A reply only speaks for this capture if it still stands now that the reply is here, not cancelled either.
+                var ended = WhyEnded(binding, cancellation);
                 if (ended != null)
                 {
                     entries.Add(NotRead(parameter, result.IsOk ? "reply not used: " + ended : ended));

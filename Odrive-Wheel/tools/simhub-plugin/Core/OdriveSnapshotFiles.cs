@@ -216,7 +216,12 @@ namespace OdriveWheel.SimHubPlugin
 
             var uncertain = new JArray();
             foreach (var entry in snapshot.Entries.Where(e => e.HasValue && e.Certainty != ReplyCertainty.Exact))
-                uncertain.Add(new JObject { ["path"] = entry.Path, ["certainty"] = OdriveSnapshotText.CertaintyName(entry.Certainty) });
+                uncertain.Add(new JObject
+                {
+                    ["path"]      = entry.Path,
+                    ["certainty"] = OdriveSnapshotText.CertaintyName(entry.Certainty),
+                    ["reason"]    = OdriveReplyCertainty.Reason(entry.Definition, entry.Certainty, capabilities.AsciiFull, capabilities.Float32RoundTrip),
+                });
 
             return new JObject
             {
@@ -232,7 +237,14 @@ namespace OdriveWheel.SimHubPlugin
                 },
                 ["completeness"] = CompletenessText(snapshot.Completeness),
                 ["abort_reason"] = snapshot.AbortReason,
-                ["values_exact"] = capabilities.FloatsAreExact,
+                // Per value, never for the file as a whole: the declaration covers the ODrive replies, not every value.
+                ["precision"] = new JObject
+                {
+                    ["all_values_exact"] = snapshot.UncertainCount == 0,
+                    ["odrive_replies"]   = OdriveSnapshotText.Precision(capabilities),
+                    ["uncertain_values"] = snapshot.UncertainCount,
+                    ["rule"]             = "Each value that is not exact is in 'uncertain', with its reason. Every other value read is exact.",
+                },
                 ["capabilities"] = new JObject
                 {
                     ["state"]       = capabilities.Checked ? StateText(capabilities.State) : "not checked",
@@ -310,9 +322,9 @@ namespace OdriveWheel.SimHubPlugin
 
                 return new SnapshotExportResult(valuesPath, metadataPath, OdriveParameterCatalog.Sha256Hex(valuesBytes), values.Count, null);
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
-                                       || ex is NotSupportedException || ex is System.Security.SecurityException)
+            catch (Exception ex)
             {
+                // Whatever went wrong, what this export created goes again, and it says so.
                 foreach (var path in written)
                 {
                     try { File.Delete(path); }
@@ -327,15 +339,17 @@ namespace OdriveWheel.SimHubPlugin
             => new SnapshotExportResult(valuesPath, metadataPath, null, 0, error);
 
         /// <summary>Runs right before a temporary file is created, for tests that put something in its way.</summary>
-        internal static Action<string> BeforeTemporaryFile;
+        internal static Action<string> BeforeTemporaryFile { get; set; }
 
         private static void WriteChecked(string path, byte[] bytes, List<string> written)
         {
             if (File.Exists(path)) throw new IOException(Path.GetFileName(path) + " is in the way");
             BeforeTemporaryFile?.Invoke(path);
-            written.Add(path);
+            // CreateNew refuses a file that appeared since: it is someone else's, and only what this export created is
+            // removed again.
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
+                written.Add(path);
                 stream.Write(bytes, 0, bytes.Length);
                 stream.Flush(true);
             }
@@ -377,9 +391,9 @@ namespace OdriveWheel.SimHubPlugin
                 var (state, detail, info) = ReadMetadata(metadataPath, bytes);
                 return new LoadedSnapshotFile(valuesPath, values, problems, metadataPath, state, detail, info);
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
-                                       || ex is NotSupportedException || ex is System.Security.SecurityException)
+            catch (Exception ex)
             {
+                // A file is data: nothing in it may end up as an exception in the window.
                 return new LoadedSnapshotFile(valuesPath, ex.Message);
             }
         }
@@ -460,54 +474,69 @@ namespace OdriveWheel.SimHubPlugin
                 return (SnapshotMetadataState.Unreadable, "the metadata is not readable: " + ex.Message, null);
             }
 
-            if (String(meta, "_type") != MetadataType) return (SnapshotMetadataState.Unreadable, "the metadata file is of another kind", null);
-            var version = meta["_version"];
-            if (version == null || version.Type != JTokenType.Integer) return (SnapshotMetadataState.Unreadable, "the metadata has no version", null);
-            if ((long)version != MetadataVersion) return (SnapshotMetadataState.UnknownVersion, "metadata version " + version + " is not known to this plugin", null);
-
-            var file = meta["values_file"] as JObject;
-            var hash = file != null ? String(file, "sha256") : null;
-            if (hash == null) return (SnapshotMetadataState.Unreadable, "the metadata names no hash of its values file", null);
-            if (!string.Equals(hash, OdriveParameterCatalog.Sha256Hex(valuesBytes), StringComparison.Ordinal))
-                return (SnapshotMetadataState.NotForThisFile, "the metadata belongs to other content: the values file was changed or replaced", null);
-
+            // Optional data from a file: whatever shape it has, the result is a state, never an exception.
             try
             {
-                var capabilities = (JObject)meta["capabilities"];
-                var capture = (JObject)meta["capture"];
-                var info = new SnapshotFileInfo
-                {
-                    Declaration      = String(capabilities, "declaration"),
-                    AsciiFull        = Bool(capabilities, "ascii_full"),
-                    Float32RoundTrip = Bool(capabilities, "float32_rt"),
-                    Completeness     = Required(meta, "completeness"),
-                    AbortReason      = String(meta, "abort_reason"),
-                    StartedUtc       = Required(capture, "started_utc"),
-                    EndedUtc         = Required(capture, "ended_utc"),
-                    Build            = String((JObject)meta["firmware"], "build"),
-                    StatusValues     = Strings((JObject)meta["status_values"]),
-                    Failed           = FailedPaths((JArray)meta["failed"]),
-                };
-                var state = Required(capabilities, "state");
-                info.CapabilityState = state == "declared" ? FirmwareCapabilityState.Declared : FirmwareCapabilityState.NotDeclared;
-
-                // The flags have to be what the recorded declaration says, or neither counts.
-                if (info.CapabilityState == FirmwareCapabilityState.Declared
-                    && (!FirmwareCapabilities.TryParse(info.Declaration, 0, out var declared, out _)
-                        || declared.AsciiFull != info.AsciiFull || declared.Float32RoundTrip != info.Float32RoundTrip))
-                    return (SnapshotMetadataState.Unreadable, "the metadata's flags do not fit its recorded declaration", null);
-                if (info.CapabilityState != FirmwareCapabilityState.Declared)
-                {
-                    info.AsciiFull = false;
-                    info.Float32RoundTrip = false;
-                }
-                return (SnapshotMetadataState.Matches, null, info);
+                return CheckMetadata(meta, valuesBytes);
             }
-            catch (Exception ex) when (ex is InvalidCastException || ex is InvalidDataException || ex is NullReferenceException || ex is ArgumentException)
+            catch (Exception ex) when (ex is InvalidDataException || ex is InvalidCastException || ex is OverflowException || ex is FormatException
+                                       || ex is ArgumentException || ex is NullReferenceException || ex is JsonException)
             {
                 return (SnapshotMetadataState.Unreadable, "the metadata is damaged: " + ex.Message, null);
             }
         }
+
+        private static (SnapshotMetadataState State, string Detail, SnapshotFileInfo Info) CheckMetadata(JObject meta, byte[] valuesBytes)
+        {
+            if (!(meta["_type"] is JValue type) || type.Type != JTokenType.String || (string)type.Value != MetadataType)
+                return (SnapshotMetadataState.Unreadable, "the metadata file is of another kind", null);
+            var version = meta["_version"] as JValue;
+            if (version == null || version.Type != JTokenType.Integer) return (SnapshotMetadataState.Unreadable, "the metadata has no version", null);
+            // A JSON integer can be of any size, so it is compared as what it is.
+            if (!(version.Value is long number) || number != MetadataVersion)
+                return (SnapshotMetadataState.UnknownVersion, "metadata version " + Shorten(version.ToString(Formatting.None)) + " is not known to this plugin", null);
+
+            var file = meta["values_file"] as JObject;
+            var hash = file?["sha256"] as JValue;
+            if (hash == null || hash.Type != JTokenType.String) return (SnapshotMetadataState.Unreadable, "the metadata names no hash of its values file", null);
+            if (!string.Equals((string)hash.Value, OdriveParameterCatalog.Sha256Hex(valuesBytes), StringComparison.Ordinal))
+                return (SnapshotMetadataState.NotForThisFile, "the metadata belongs to other content: the values file was changed or replaced", null);
+
+            var capabilities = Section(meta, "capabilities");
+            var capture = Section(meta, "capture");
+            var info = new SnapshotFileInfo
+            {
+                Declaration      = String(capabilities, "declaration"),
+                AsciiFull        = Bool(capabilities, "ascii_full"),
+                Float32RoundTrip = Bool(capabilities, "float32_rt"),
+                Completeness     = Required(meta, "completeness"),
+                AbortReason      = String(meta, "abort_reason"),
+                StartedUtc       = Required(capture, "started_utc"),
+                EndedUtc         = Required(capture, "ended_utc"),
+                Build            = String(meta["firmware"] == null ? null : Section(meta, "firmware"), "build"),
+                StatusValues     = Strings(Section(meta, "status_values")),
+                Failed           = FailedPaths(meta["failed"] as JArray ?? throw new InvalidDataException("failed is no list")),
+            };
+            var state = Required(capabilities, "state");
+            info.CapabilityState = state == "declared" ? FirmwareCapabilityState.Declared : FirmwareCapabilityState.NotDeclared;
+
+            // The flags have to be what the recorded declaration says, or neither counts.
+            if (info.CapabilityState == FirmwareCapabilityState.Declared
+                && (!FirmwareCapabilities.TryParse(info.Declaration, 0, out var declared, out _)
+                    || declared.AsciiFull != info.AsciiFull || declared.Float32RoundTrip != info.Float32RoundTrip))
+                return (SnapshotMetadataState.Unreadable, "the metadata's flags do not fit its recorded declaration", null);
+            if (info.CapabilityState != FirmwareCapabilityState.Declared)
+            {
+                info.AsciiFull = false;
+                info.Float32RoundTrip = false;
+            }
+            return (SnapshotMetadataState.Matches, null, info);
+        }
+
+        private static string Shorten(string text) => text.Length <= 24 ? text : text.Substring(0, 21) + "...";
+
+        private static JObject Section(JObject parent, string key)
+            => parent[key] as JObject ?? throw new InvalidDataException(key + " is no object");
 
         private static string String(JObject parent, string key)
         {

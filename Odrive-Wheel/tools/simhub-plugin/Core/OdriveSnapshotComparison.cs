@@ -200,12 +200,19 @@ namespace OdriveWheel.SimHubPlugin
                 note = UncertainNote(leftCertainty, rightCertainty);
                 return ComparisonVerdict.SameText;
             }
-            // Older firmware kept the first 9 characters, so the whole number starts with a cut reply.
-            string cut = leftCut ? left : right, other = leftCut ? right : left;
-            bool bothCut = leftCut && rightCut;
-            if (bothCut || other.Length < cut.Length || !other.StartsWith(cut, StringComparison.Ordinal))
-                return ComparisonVerdict.Differs;
-            note = "a reply may be cut off, the other one starts with it";
+            // A prefix only says something about digits as the firmware writes them.
+            if (left != a.ToString(CultureInfo.InvariantCulture) || right != b.ToString(CultureInfo.InvariantCulture))
+            {
+                note = "precision not proven, and a reply is written unusually";
+                return ComparisonVerdict.Unclear;
+            }
+            // Older firmware kept the first 9 characters, so the whole number starts with a reply that may be cut. Where
+            // both may be, either can be the start of the other.
+            bool possible = leftCut && rightCut ? left.StartsWith(right, StringComparison.Ordinal) || right.StartsWith(left, StringComparison.Ordinal)
+                          : leftCut ? right.StartsWith(left, StringComparison.Ordinal)
+                          : left.StartsWith(right, StringComparison.Ordinal);
+            if (!possible) return ComparisonVerdict.Differs;
+            note = "a reply may be cut off, and one starts with the other";
             return ComparisonVerdict.Unclear;
         }
 
