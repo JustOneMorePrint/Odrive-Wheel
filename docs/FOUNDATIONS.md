@@ -57,7 +57,7 @@ The window always shows which of these a value is in. There is no single "saved"
 | Sent | The line went out | The worker, a write has no positive answer |
 | In RAM, verified | The board reports that value | Readback compared by type |
 | In RAM, unclear | It may or may not be there | The readback failed or was refused |
-| Save reported | FFB store only: the firmware says it worked | `sys.save!` answered `OK`, which it does only without write errors. No read after a reboot yet |
+| Save reported | FFB store only: the firmware reports no counted write error | `sys.save!` answered `OK`. Some effect and filter writes are not checked, so persistence is not confirmed |
 | Save sent, unconfirmed | ODrive store only: the line went out | `ss` has no answer |
 | Save failed | Not saved, the store may hold a part of it | `sys.save!` answered `ERR`, with the counts in `sys.savestat?`, or the values differ after a reboot |
 | Saved | In flash | Read again after a reboot, and equal to what was saved |
@@ -71,11 +71,15 @@ marked as in RAM, nothing is retried on its own, and after a failure what the st
 |---|---|---|
 | Flash | S10+S11 | S1+S2 |
 | Save | `ss` | `sys.save!` |
-| Answer | None | `OK` or `ERR`, with counters in `sys.savestat?` |
+| Answer | None | `OK` or `ERR`; `sys.savestat?` counts only the writes checked by `ffb_save_flash()` |
 | Refused | While a motor is armed `ss` does nothing, without an answer | With a motor active, `ERR` from S1 |
 | Afterwards | A reboot, **also if the store failed**, so a reboot confirms nothing (`ODrive::save_configuration`) | No reboot |
 
-A report names both. Values in RAM that differ from the saved ones are marked until a reboot or a save.
+`EffectsCalculator::saveFlash()` currently ignores its `Flash_Write` results. These effect and filter write failures can therefore leave
+`sys.save!` reporting `OK` and are absent from `sys.savestat?`. A refusal by S1 leaves the counters from the previous save unchanged.
+
+A report names both stores. Sending a save, receiving `OK` or observing a reboot does not by itself confirm persistence or clear its
+uncertainty. Only a post-reboot readback that matches the intended values confirms persistence for the corresponding store.
 
 ## Who decides
 

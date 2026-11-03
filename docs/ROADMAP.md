@@ -311,3 +311,5 @@ ob `%.9g` in newlib-nano dieselben Texte liefert und ob die Werte dort wirklich 
 - **Left over:** `docs/TORQUE_CONTROL.md` gives current bandwidths in Hz, the parameter is rad/s.
 - **Left over:** `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, the same as a real 0 °C.
 - **Left over:** the comment in `Odrive-Wheel/Makefile` says "OVP trip = 59.92V". The trip level defaults to 30 V, 59.92 V is the default of the ramp.
+- **Left over:** `EffectsCalculator::saveFlash()` ignores its `Flash_Write` results. `sys.save!` and `sys.savestat?` therefore do not report all
+  effect and filter write failures. Fix and test error propagation with the save workflow; see `docs/FOUNDATIONS.md` for what an `OK` means today.
