@@ -72,12 +72,18 @@ namespace OdriveWheel.SimHubPlugin
     {
         public const string ResourceName = "OdriveWheel.SimHubPlugin.parameter-catalog.json";
 
-        private OdriveParameterCatalog(IReadOnlyList<ParameterDefinition> parameters)
+        private OdriveParameterCatalog(IReadOnlyList<ParameterDefinition> parameters, int version, string sha256)
         {
             Parameters = parameters;
+            Version    = version;
+            Sha256     = sha256;
         }
 
         public IReadOnlyList<ParameterDefinition> Parameters { get; }
+        /// <summary>The "version" of the catalog file, 0 if it has none.</summary>
+        public int Version { get; }
+        /// <summary>SHA-256 of the catalog text, so a record can name exactly what it was read with.</summary>
+        public string Sha256 { get; }
 
         public IEnumerable<ParameterDefinition> InTab(string tab) => Parameters.Where(p => p.Tab == tab);
 
@@ -113,7 +119,13 @@ namespace OdriveWheel.SimHubPlugin
                 if (!seen.Add(definition.Path)) throw new InvalidDataException("duplicate path: " + definition.Path);
                 parameters.Add(definition);
             }
-            return new OdriveParameterCatalog(parameters);
+            return new OdriveParameterCatalog(parameters, root.Value<int?>("version") ?? 0, Sha256Hex(Encoding.UTF8.GetBytes(json)));
+        }
+
+        internal static string Sha256Hex(byte[] bytes)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return string.Concat(sha.ComputeHash(bytes).Select(b => b.ToString("x2", CultureInfo.InvariantCulture)));
         }
 
         private static Dictionary<string, IReadOnlyDictionary<long, string>> ParseEnums(JObject section)
