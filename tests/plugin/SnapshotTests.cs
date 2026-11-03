@@ -94,20 +94,32 @@ namespace OdriveWheel.SimHubPlugin.Tests
         private readonly IOdriveParameters _inner;
         private readonly int _at;
         private readonly Action _action;
+        private readonly bool _afterReply;
         private int _reads;
 
-        public HookedParameters(IOdriveParameters inner, int at, Action action)
+        /// <param name="afterReply">Act once the nth reply is back, before the capture sees it.</param>
+        public HookedParameters(IOdriveParameters inner, int at, Action action, bool afterReply = false)
         {
             _inner = inner;
             _at = at;
             _action = action;
+            _afterReply = afterReply;
         }
 
         public System.Threading.Tasks.Task<ParameterResult> ReadAsync(string path, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive,
                                                                        CancellationToken cancellation = default, SerialOperationContext context = null)
         {
-            if (Interlocked.Increment(ref _reads) == _at) _action();
-            return _inner.ReadAsync(path, protocol, priority, cancellation, context);
+            bool now = Interlocked.Increment(ref _reads) == _at;
+            if (now && !_afterReply) _action();
+            var read = _inner.ReadAsync(path, protocol, priority, cancellation, context);
+            return now && _afterReply ? After(read) : read;
+        }
+
+        private async System.Threading.Tasks.Task<ParameterResult> After(System.Threading.Tasks.Task<ParameterResult> read)
+        {
+            var result = await read.ConfigureAwait(false);
+            _action();
+            return result;
         }
 
         public System.Threading.Tasks.Task<ParameterResult> WriteAsync(string path, string value, FieldProtocol protocol, CommandPriority priority = CommandPriority.Interactive,
@@ -481,6 +493,85 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 Check.Equal(SnapshotCompleteness.Complete, ChangeAfterTheLastReply(rig, null).Completeness, "without a change it is complete");
         }
 
+        public static void Test_a_cancel_after_the_last_reply_gives_no_complete_snapshot()
+        {
+            using (var rig = new SnapshotRig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var snapshot = rig.Run(new Hook(p => { if (p.Done == p.Total) cancel.Cancel(); }), cancel.Token);
+                Check.Equal(snapshot.Expected, snapshot.ReadCount, "every value was read");
+                Check.Equal(SnapshotCompleteness.Partial, snapshot.Completeness, "still no complete snapshot");
+                Check.Equal("cancelled, before the capture was finished", snapshot.AbortReason, "reason");
+            }
+
+            // A closing window cancels a token linked to the capture's, the same way.
+            using (var rig = new SnapshotRig())
+            using (var closing = new CancellationTokenSource())
+            using (var capture = CancellationTokenSource.CreateLinkedTokenSource(closing.Token))
+            {
+                var snapshot = rig.Run(new Hook(p => { if (p.Done == p.Total) closing.Cancel(); }), capture.Token);
+                Check.Equal(SnapshotCompleteness.Partial, snapshot.Completeness, "closing: partial");
+                Check.Equal("cancelled, before the capture was finished", snapshot.AbortReason, "closing: reason");
+            }
+
+            // A stop at the same moment is the reason that counts.
+            using (var rig = new SnapshotRig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var snapshot = rig.Run(new Hook(p =>
+                {
+                    if (p.Done != p.Total) return;
+                    cancel.Cancel();
+                    rig.Service.RequestStop();
+                }), cancel.Token);
+                Check.Equal("software stop, before the capture was finished", snapshot.AbortReason, "the stop goes first");
+            }
+        }
+
+        public static void Test_a_reply_that_comes_after_a_cancel_is_not_used()
+        {
+            using (var rig = new SnapshotRig())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var hooked = new HookedParameters(rig.Rig.Parameters, 30, () => cancel.Cancel(), afterReply: true);
+                var capture = new OdriveSnapshotCapture(hooked, rig.Service.GetStatus, rig.Catalog, rig.Detector.StatusFor);
+                var snapshot = capture.CaptureAsync(null, cancel.Token).Result;
+
+                Check.Equal(SnapshotCompleteness.Partial, snapshot.Completeness, "partial");
+                Check.Equal("cancelled", snapshot.AbortReason, "reason");
+                Check.Equal(29, snapshot.ReadCount, "the 29 before it");
+                Check.Equal("reply not used: cancelled", snapshot.Entries[29].Detail, "the 30th reply came after the cancel");
+            }
+        }
+
+        public static void Test_question_mark_commands_with_flash_effects_never_go_out_when_reading()
+        {
+            using (var rig = new SnapshotRig())
+            {
+                var status = rig.Service.GetStatus();
+                var context = SerialOperationContext.ForReading(status.ConnectGeneration, status.LastStop, status.StopLatched);
+                foreach (var line in new[] { "sys.save?", "sys.eetest?", "sys.eedump?", "sys.eeformat?", "sys.format?", "sys.reboot?", "axis.anticogcal?" })
+                {
+                    var result = rig.Service.SendAsync(new SerialRequest(line, ReplyMode.OffbEcho, 300, CommandPriority.Batch,
+                                                                         OdriveProtocol.OffbEcho(line.TrimEnd('?'), '?'), context: context)).Result;
+                    Check.True(!result.LineWritten && result.Outcome != SerialOutcome.Reply, "refused: " + line + " (" + result.Outcome + ")");
+                }
+                Check.Lines(new string[0], rig.Board.WireLines, "none of them on the wire");
+
+                // The catalog reads go through the same context, also after a timeout, which takes a sync line first.
+                rig.Board.ReplyOverride = line => line == "r axis0.motor.config.pole_pairs" ? "[stale|1]" : null;
+                var timedOut = rig.Rig.Parameters.ReadAsync("axis0.motor.config.pole_pairs", FieldProtocol.Odrive, CommandPriority.Batch, default, context).Result;
+                Check.Equal(ParameterStatus.Timeout, timedOut.Status, "a read without a reply");
+                rig.Board.ReplyOverride = null;
+                foreach (var parameter in rig.Catalog.Parameters)
+                {
+                    var read = rig.Rig.Parameters.ReadAsync(parameter.Path, parameter.Protocol, CommandPriority.Batch, default, context).Result;
+                    Check.Equal(ParameterStatus.Ok, read.Status, "a catalog read: " + parameter.Path + " " + read.Detail);
+                }
+                Check.True(rig.Board.WireLines.Any(l => l.StartsWith("f ", StringComparison.Ordinal)), "the sync line went out");
+            }
+        }
+
         public static void Test_clearing_the_latch_after_the_last_reply_gives_no_complete_snapshot()
         {
             using (var rig = new SnapshotRig())
@@ -812,6 +903,106 @@ namespace OdriveWheel.SimHubPlugin.Tests
             Check.Equal(SnapshotMetadataState.Unreadable, OdriveSnapshotFile.Load(Path.Combine(folder, "garbage.json")).Metadata, "unreadable metadata");
         }
 
+        // Metadata of any shape gives a result, never an exception, and the values stay comparable.
+        public static void Test_metadata_of_any_shape_gives_a_controlled_result()
+        {
+            var snapshot = Exact.Value;
+            var folder = NewFolder();
+            var path = Path.Combine(folder, "a.json");
+            Check.True(OdriveSnapshotFile.Export(snapshot, path, "1").Succeeded, "exported");
+            var meta = File.ReadAllText(OdriveSnapshotFile.MetadataPathFor(path));
+
+            var variants = new (string Name, Func<JObject, string> Change)[]
+            {
+                ("version too large", m => "{\"_type\":\"odrive-wheel-catalog-snapshot\",\"_version\":9223372036854775808}"),
+                ("version huge",      m => "{\"_type\":\"odrive-wheel-catalog-snapshot\",\"_version\":1" + new string('0', 400) + "}"),
+                ("version negative",  m => { m["_version"] = -1; return m.ToString(); }),
+                ("version float",     m => { m["_version"] = 1.0; return m.ToString(); }),
+                ("version string",    m => { m["_version"] = "1"; return m.ToString(); }),
+                ("type number",       m => { m["_type"] = 5; return m.ToString(); }),
+                ("values_file text",  m => { m["values_file"] = "a.json"; return m.ToString(); }),
+                ("hash number",       m => { m["values_file"]["sha256"] = 5; return m.ToString(); }),
+                ("capabilities list", m => { m["capabilities"] = new JArray(); return m.ToString(); }),
+                ("state number",      m => { m["capabilities"]["state"] = 1; return m.ToString(); }),
+                ("start number",      m => { m["capture"]["started_utc"] = 5; return m.ToString(); }),
+                ("capture missing",   m => { m.Remove("capture"); return m.ToString(); }),
+                ("status list",       m => { m["status_values"] = new JArray(); return m.ToString(); }),
+                ("status number",     m => { m["status_values"]["vbus_voltage"] = 48; return m.ToString(); }),
+                ("failed object",     m => { m["failed"] = new JObject(); return m.ToString(); }),
+                ("failed number",     m => { m["failed"] = new JArray(5); return m.ToString(); }),
+                ("failed path",       m => { m["failed"] = new JArray(new JObject { ["path"] = 5, ["outcome"] = "x" }); return m.ToString(); }),
+                ("not an object",     m => "[1, 2]"),
+                ("nested deep",       m => "{\"_type\":" + new string('[', 2000) + new string(']', 2000) + "}"),
+            };
+            foreach (var (name, change) in variants)
+            {
+                var copy = Path.Combine(folder, name.Replace(' ', '_') + ".json");
+                File.Copy(path, copy);
+                File.WriteAllText(OdriveSnapshotFile.MetadataPathFor(copy), change(JObject.Parse(meta)), new UTF8Encoding(false));
+                try
+                {
+                    var loaded = OdriveSnapshotFile.Load(copy);
+                    Check.True(loaded.Loaded && loaded.Values.Count == snapshot.ConfigurationValues().Count(), name + ": the values stay usable: " + loaded.Error);
+                    Check.True(loaded.Metadata != SnapshotMetadataState.Matches && loaded.Info == null, name + ": no metadata taken: " + loaded.Metadata);
+                    Check.True(!string.IsNullOrEmpty(loaded.MetadataDetail), name + ": and it says why");
+                    var side = loaded.ToSide(name);
+                    Check.True(!side.AsciiFull && !side.Float32RoundTrip, name + ": no precision proven");
+                    var direct = OdriveSnapshotFile.Load(OdriveSnapshotFile.MetadataPathFor(copy));
+                    Check.True(direct.Loaded || !string.IsNullOrEmpty(direct.Error), name + ": choosing the metadata file gives a result too");
+                }
+                catch (Exception ex)
+                {
+                    Check.Fail(name + ": threw " + ex.GetType().Name + ": " + ex.Message);
+                }
+            }
+        }
+
+        // The temporary file of an export is the export's only once it has created it.
+        public static void Test_an_export_never_deletes_a_file_that_appears_in_its_way()
+        {
+            var snapshot = Exact.Value;
+            foreach (var which in new[] { "values", "metadata" })
+            {
+                var folder = NewFolder();
+                var path = Path.Combine(folder, "x.json");
+                var foreign = (which == "values" ? path : OdriveSnapshotFile.MetadataPathFor(path)) + ".tmp";
+                try
+                {
+                    OdriveSnapshotFile.BeforeTemporaryFile = p => { if (p == foreign) File.WriteAllText(p, "someone else's"); };
+                    var result = OdriveSnapshotFile.Export(snapshot, path, "1");
+                    Check.True(!result.Succeeded, which + ": the export fails");
+                    Check.True(File.Exists(foreign) && File.ReadAllText(foreign) == "someone else's", which + ": the other file is untouched");
+                    Check.Equal(1, Directory.GetFiles(folder).Length, which + ": and nothing of the export is left: " + string.Join(", ", Directory.GetFiles(folder)));
+                }
+                finally
+                {
+                    OdriveSnapshotFile.BeforeTemporaryFile = null;
+                }
+            }
+        }
+
+        // axis.maxtorque comes rounded to two decimals whatever the firmware declares for "r".
+        public static void Test_no_blanket_exactness_is_claimed()
+        {
+            var snapshot = Exact.Value;
+            Check.Equal(ReplyCertainty.MayBeRounded, snapshot.Find("axis.maxtorque").Certainty, "the premise");
+            var path = Path.Combine(NewFolder(), "a.json");
+            var result = OdriveSnapshotFile.Export(snapshot, path, "1");
+            Check.True(result.Succeeded, result.Error);
+            var meta = JObject.Parse(File.ReadAllText(result.MetadataPath));
+
+            Check.True(meta["values_exact"] == null || !(bool)meta["values_exact"], "no claim that the values are exact");
+            Check.True(meta["precision"] is JObject && (bool)meta["precision"]["all_values_exact"] == false, "the precision says not all: " + meta["precision"]);
+            var uncertain = ((JArray)meta["uncertain"]).Cast<JObject>().FirstOrDefault(u => (string)u["path"] == "axis.maxtorque");
+            Check.True(uncertain != null && (string)uncertain["certainty"] == "may be rounded" && !string.IsNullOrEmpty((string)uncertain["reason"]),
+                       "axis.maxtorque is named, with why: " + uncertain);
+
+            var summary = OdriveSnapshotText.Summary(snapshot);
+            Check.True(summary.Contains("axis.maxtorque"), "the window names it: " + summary);
+            var report = OdriveDiagnosticReport.Build(snapshot, null, "1", DateTime.UtcNow);
+            Check.True(report.Contains("axis.maxtorque"), "the report names it");
+        }
+
         public static void Test_a_metadata_file_leads_only_to_a_file_next_to_it()
         {
             var folder = NewFolder();
@@ -975,6 +1166,35 @@ namespace OdriveWheel.SimHubPlugin.Tests
             File.Delete(OdriveSnapshotFile.MetadataPathFor(paths[1]));
             var unproven = SnapshotComparison.Compare(a.ToSide("a"), OdriveSnapshotFile.Load(paths[1]).ToSide("b"), Catalog);
             Check.Equal(ComparisonVerdict.Unclear, unproven.Values.First(v => v.Path == "config.brake_resistance").Verdict, "without proof only unclear");
+        }
+
+        // Two files without metadata: either number may be cut by older firmware, so a shared prefix leaves it open.
+        public static void Test_uncertain_integers_that_share_a_prefix_stay_unclear()
+        {
+            var folder = SnapshotFileTests.NewFolder();
+            var cases = new (string A, string B, ComparisonVerdict Expected)[]
+            {
+                ("214748364", "2147483647", ComparisonVerdict.Unclear),
+                ("214748364", "2147483640000", ComparisonVerdict.Unclear),
+                ("214748364", "314748364", ComparisonVerdict.Differs),
+                ("214748364", "3147483647", ComparisonVerdict.Differs),
+                ("214748364", "21474836", ComparisonVerdict.Differs),
+                ("214748364", "214748364", ComparisonVerdict.SameText),
+                ("2147483647", "2147483648", ComparisonVerdict.Differs),
+                ("12", "13", ComparisonVerdict.Differs),
+            };
+            int n = 0;
+            foreach (var (a, b, expected) in cases)
+            {
+                foreach (var (left, right) in new[] { (a, b), (b, a) })
+                {
+                    var l = FileSide("l" + n + ".json", "{ \"axis0.encoder.config.cpr\": \"" + left + "\" }", folder);
+                    var r = FileSide("r" + n + ".json", "{ \"axis0.encoder.config.cpr\": \"" + right + "\" }", folder);
+                    n++;
+                    var value = SnapshotComparison.Compare(l, r, Catalog).Values.First(v => v.Path == "axis0.encoder.config.cpr");
+                    Check.Equal(expected, value.Verdict, left + " | " + right + " (" + value.Note + ")");
+                }
+            }
         }
 
         public static void Test_unknown_file_keys_are_data_and_compared_as_text()
@@ -1230,6 +1450,122 @@ namespace OdriveWheel.SimHubPlugin.Tests
                 foreach (var line in rig.Rig.Board.Lines) Check.True(catalog.Contains(line), "a catalog read, not a file key: " + line);
                 Check.Equal("8", rig.Rig.Board.Value("axis0.current_state"), "the axis is unchanged");
                 Check.Equal("0", rig.Rig.Board.Value("axis0.requested_state"), "nothing requested");
+            }
+        }
+
+        // Holds the next file job of the window at its start, wherever it runs.
+        private sealed class FileJobHold : IDisposable
+        {
+            public readonly ManualResetEventSlim Entered = new ManualResetEventSlim(false);
+            private readonly ManualResetEventSlim _release = new ManualResetEventSlim(false);
+
+            public FileJobHold(WindowTests.WindowRig rig)
+            {
+                rig.On(w => w.FileWorkHook = () =>
+                {
+                    Entered.Set();
+                    _release.Wait(8000);
+                });
+            }
+
+            public void Release() => _release.Set();
+            public void Dispose() => _release.Set();
+        }
+
+        private static void Later(WindowTests.WindowRig rig, Action<OdriveConfigWindow> action)
+        {
+            var dispatcher = rig.On(w => w.Dispatcher);
+            rig.Host.Invoke(w => dispatcher.BeginInvoke(new Action(() => action(w))));
+        }
+
+        // Without a dialog: what the dialogs call with a chosen path, and the buttons, each held at its first file access.
+        public static void Test_a_held_file_job_leaves_stop_and_port_usable()
+        {
+            var folder = SnapshotFileTests.NewFolder();
+            var file = Path.Combine(folder, "a.json");
+            File.WriteAllText(file, "{ \"config.brake_resistance\": \"7\" }");
+            var jobs = new (string Name, Action<OdriveConfigWindow, CatalogSnapshot> Start, Func<OdriveConfigWindow, bool> Done)[]
+            {
+                ("export",        (w, s) => w.OnExportPicked(s, Path.Combine(folder, "export.json")), w => w.SnapshotFileText.Text.StartsWith("Exported", StringComparison.Ordinal)),
+                ("report",        (w, s) => w.OnReportPicked(s, Path.Combine(folder, "report.md")),   w => w.SnapshotFileText.Text.StartsWith("Report written", StringComparison.Ordinal)),
+                ("compare files", (w, s) => { w.CompareLeftBox.Text = file; w.CompareRightBox.Text = file; w.CompareFiles(); }, w => w.ComparisonBox.Text.Contains("Settings:")),
+            };
+            foreach (var (name, start, done) in jobs)
+            {
+                using (var rig = NewRig())
+                {
+                    StartCapture(rig);
+                    var snapshot = WaitForSnapshot(rig);
+                    using (var hold = new FileJobHold(rig))
+                    {
+                        Later(rig, w => start(w, snapshot));
+                        Check.True(hold.Entered.Wait(5000), name + ": the job is held");
+
+                        Later(rig, w => WindowTests.Click(w.StopButton));
+                        Check.True(Wait.Until(() => rig.Rig.Board.Value("axis0.current_state") == "1", 2000), name + ": the stop goes out meanwhile");
+                        Later(rig, w => WindowTests.Click(w.PortButton));
+                        Check.True(Wait.Until(() => rig.Rig.Service.GetStatus().State == SerialConnectionState.Released, 2000), name + ": the port is released meanwhile");
+
+                        hold.Release();
+                        Check.True(Wait.Until(() => rig.On(done), 8000), name + ": the job ends afterwards");
+                    }
+                }
+            }
+        }
+
+        public static void Test_closing_during_a_held_file_job_is_not_blocked()
+        {
+            var folder = SnapshotFileTests.NewFolder();
+            var path = Path.Combine(folder, "export.json");
+            using (var rig = NewRig())
+            {
+                StartCapture(rig);
+                var snapshot = WaitForSnapshot(rig);
+                using (var hold = new FileJobHold(rig))
+                {
+                    Later(rig, w => w.OnExportPicked(snapshot, path));
+                    Check.True(hold.Entered.Wait(5000), "the job is held");
+                    rig.Host.Close(2000);
+                    Check.True(!rig.Host.IsOpen, "the window closes while the job is held");
+                    hold.Release();
+                }
+                Check.True(Wait.Until(() => File.Exists(OdriveSnapshotFile.MetadataPathFor(path))), "the export still ends");
+                Check.Equal(SnapshotMetadataState.Matches, OdriveSnapshotFile.Load(path).Metadata, "and is whole");
+            }
+        }
+
+        // A comparison that fails leaves no earlier one behind, neither in the window nor in the report.
+        public static void Test_a_failed_comparison_leaves_no_earlier_one_for_the_report()
+        {
+            var folder = SnapshotFileTests.NewFolder();
+            var good = Path.Combine(folder, "a.json");
+            var bad = Path.Combine(folder, "b.json");
+            File.WriteAllText(good, "{ \"config.brake_resistance\": \"7\" }");
+            File.WriteAllText(bad, "{ broken");
+            using (var rig = NewRig())
+            {
+                rig.Host.Invoke(w =>
+                {
+                    w.CompareLeftBox.Text = good;
+                    WindowTests.Click(w.CompareBoardButton);
+                });
+                Check.True(Wait.Until(() => rig.On(w => w.ComparisonBox.Text).Contains("Settings:"), 15000), "a first comparison");
+                var snapshot = rig.On(w => w.CurrentSnapshot);
+                Check.True(rig.On(w => w.CurrentComparison) != null, "it is held");
+
+                rig.Host.Invoke(w =>
+                {
+                    w.CompareLeftBox.Text = bad;
+                    WindowTests.Click(w.CompareBoardButton);
+                });
+                Check.True(Wait.Until(() => rig.On(w => w.ComparisonBox.Text).Contains("b.json")), rig.On(w => w.ComparisonBox.Text));
+                Check.True(rig.On(w => w.CurrentComparison) == null, "the earlier comparison is gone");
+
+                var report = Path.Combine(folder, "report.md");
+                Later(rig, w => w.OnReportPicked(snapshot, report));
+                Check.True(Wait.Until(() => File.Exists(report) && rig.On(w => w.SnapshotFileText.Text).StartsWith("Report written", StringComparison.Ordinal)), "report written");
+                var text = File.ReadAllText(report);
+                Check.True(text.Contains("No comparison with a file") && !text.Contains("a.json"), "the report has no comparison from before");
             }
         }
 

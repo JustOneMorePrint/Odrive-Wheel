@@ -326,9 +326,13 @@ namespace OdriveWheel.SimHubPlugin
         private static SnapshotExportResult Failed(string valuesPath, string metadataPath, string error)
             => new SnapshotExportResult(valuesPath, metadataPath, null, 0, error);
 
+        /// <summary>Runs right before a temporary file is created, for tests that put something in its way.</summary>
+        internal static Action<string> BeforeTemporaryFile;
+
         private static void WriteChecked(string path, byte[] bytes, List<string> written)
         {
             if (File.Exists(path)) throw new IOException(Path.GetFileName(path) + " is in the way");
+            BeforeTemporaryFile?.Invoke(path);
             written.Add(path);
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {

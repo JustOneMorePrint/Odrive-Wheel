@@ -269,8 +269,20 @@ namespace OdriveWheel.SimHubPlugin
                            null, left, right);
         }
 
-        private static LoadedSnapshotFile LoadForComparison(string text)
-            => OdriveSnapshotFile.Load((text ?? "").Trim().Trim('"'));
+        private LoadedSnapshotFile LoadForComparison(string text)
+        {
+            FileWorkHook?.Invoke();
+            return OdriveSnapshotFile.Load((text ?? "").Trim().Trim('"'));
+        }
+
+        /// <summary>Runs at the start of every file job, for tests that hold one there.</summary>
+        internal Action FileWorkHook { get; set; }
+
+        /// <summary>What the export dialog calls with the chosen path.</summary>
+        internal void OnExportPicked(CatalogSnapshot snapshot, string path) => ExportSnapshotTo(snapshot, path);
+
+        /// <summary>What the report dialog calls with the chosen path.</summary>
+        internal void OnReportPicked(CatalogSnapshot snapshot, string path) => WriteReportTo(snapshot, path);
 
         private void ShowComparison(SnapshotComparison comparison, CatalogSnapshot snapshot, params LoadedSnapshotFile[] files)
         {
@@ -290,12 +302,13 @@ namespace OdriveWheel.SimHubPlugin
             if (snapshot == null) return;
             OffThreadFileDialog.Save(Dispatcher, "Export the catalog snapshot", _lastFolder,
                                      OdriveSnapshotFile.FileName(snapshot.StartedUtc, snapshot.Completeness), JsonFilter,
-                                     path => ExportSnapshotTo(snapshot, path), _log);
+                                     path => OnExportPicked(snapshot, path), _log);
         }
 
         /// <summary>Writes the values file and its metadata, and says exactly what came of it.</summary>
         internal SnapshotExportResult ExportSnapshotTo(CatalogSnapshot snapshot, string path)
         {
+            FileWorkHook?.Invoke();
             var result = OdriveSnapshotFile.Export(snapshot, path, PluginVersion);
             if (_closed) return result;
             if (result.Succeeded)
@@ -321,12 +334,13 @@ namespace OdriveWheel.SimHubPlugin
             var snapshot = _snapshot;
             if (snapshot == null) return;
             OffThreadFileDialog.Save(Dispatcher, "Write the diagnostic report", _lastFolder, OdriveDiagnosticReport.FileName(DateTime.UtcNow), ReportFilter,
-                                     path => WriteReportTo(snapshot, path), _log);
+                                     path => OnReportPicked(snapshot, path), _log);
         }
 
         /// <summary>Writes the report of this snapshot, with the comparison that belongs to it. Null on success, else why not.</summary>
         internal string WriteReportTo(CatalogSnapshot snapshot, string path)
         {
+            FileWorkHook?.Invoke();
             var comparison = _comparedSnapshot == snapshot ? _comparison : null;
             var text = OdriveDiagnosticReport.Build(snapshot, comparison, PluginVersion, DateTime.UtcNow);
             string error = null;
