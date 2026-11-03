@@ -92,7 +92,9 @@ moves to the plugin in step 1d. The plugin's catalog already lists these values,
 
 To carry over knowingly:
 
-- The pull-up is **external**: the STM32 has none in analog mode, and 5 V needs a higher value to stay within the ADC.
+- The pull-up in the described motor-sensor circuit is **external**: the STM32 has none in analog mode. Verify the actual board circuit and
+  keep the ADC input within its rated voltage in normal operation and fault conditions. A larger pull-up alone does not make a 5 V sensor
+  circuit safe, particularly with an open sensor.
 - Without a pull-up the reading looks like a valid temperature. The firmware cannot tell a missing sensor, so setup has to ask
   for a plausibility check at a known temperature.
 - `0.0` from `sys.temp?` or `sys.motortemp?` is ambiguous: these commands answer it for NaN, and a real 0 °C looks the same. It shows

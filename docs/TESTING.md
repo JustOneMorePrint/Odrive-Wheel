@@ -26,30 +26,29 @@ Deferred at the user's request. A point stays here until the user has run it, an
 | [PR #6](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/6) | `%.9g` of newlib-nano, values read back on the board |
 | [PR #7](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/7) | Power supply data, reading and writing the ten fields, the `%f` parser behind `w` |
 | [PR #8](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/8) | `sys.capabilities?`, the T3 steps of the PR |
+| [PR #10](https://github.com/JustOneMorePrint/Odrive-Wheel/pull/10), 1b | Catalog snapshot on the board, with and without the stop latch, the export in the web client's import in a real browser, both comparisons, the report's temperatures against a known temperature |
 | `docs/HARDWARE.md` | Support level of each board |
 
 ## Vor jedem Flashen
 
-1. **ODrive-Konfiguration sichern** (Export als JSON. In the plugin planned next, stage 1 of `docs/ROADMAP.md`; bis dahin
-   nur über die lokale Datei `Odrive-Wheel/tools/odrive-wheel.html`).
+1. **ODrive-Konfiguration sichern.** In the plugin: tab Snapshot, **Capture snapshot**, **Export snapshot…**. It is a catalog snapshot
+   of the RAM and no complete backup: FFB settings beyond `axis.maxtorque` and `fx.master`, the profiles and the anticogging map are not in
+   it (`docs/packages/PKG1.md`). Otherwise the export of the local file `Odrive-Wheel/tools/odrive-wheel.html`.
 2. **FFB-Einstellungen und Profile sichern** (Profil-Export).
 3. **Aktuelle Firmware-Datei aufheben** (`odrive-wheel.bin` des zuletzt funktionierenden
    Stands, inklusive Baseline aus Schritt 0).
 
 ## Flashen
 
-- Läuft SimHub mit dem Plugin, zuerst dort **Release port** drücken. Das Plugin hält den
-  seriellen Port, solange es läuft.
-- Der DFU-Flasher im Plugin ist geplant (Teilschritt 1e) und noch nicht vorhanden.
-- Bis dahin: `dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D odrive-wheel.bin`.
-  Achtung: Die `.bin` deckt auch den Bereich des FFB-Speichers ab; beim Flashen per
-  `dfu-util` können die FFB-Einstellungen verloren gehen. Deshalb vorher sichern.
-- Übergangsweise bleibt die lokale Datei `Odrive-Wheel/tools/odrive-wheel.html` → Tab
-  „DFU Flash“ → **Datei auswählen** mit der `.bin` aus dem PR-Build. Nicht „Fetch latest
-  from GitHub“ verwenden, das lädt die Original-Firmware. Eine gehostete Fassung über
-  GitHub Pages gehört nicht zum Projektbetrieb.
-- Die `.bin` gibt es als Artifact im CI-Lauf des PRs oder aus dem lokalen Build.
-- Nach dem Flashen mit `sys.build?` prüfen, dass der richtige Stand läuft.
+- Release the serial port in SimHub before another tool takes it over.
+- The protected DFU updater in the plugin is planned (1e), not implemented. The historical HTML flasher is not the approved
+  protected-update path; its automatic GitHub download selects upstream firmware, not this fork. GitHub Pages is not used.
+- For a blank, matching board, see the [manual flashing route](BUILDING.md#manual-flashing). A raw whole-image flash can erase
+  existing settings. FFB EEPROM is in S1+S2, ODrive NVM in S10+S11, and S9 is reserved for the planned calibration store.
+- Preserve the records listed above before an update. Neither the current catalog snapshot nor the legacy JSON export is a full
+  NVM or calibration-map backup. The future updater must enforce the sector rules in [Package 1e](packages/PKG1.md#details-zu-1e).
+- Use the `.bin` from this fork's successful CI run for the intended commit, or the matching local build. Keep the file.
+- After a user-performed flash, check `sys.build?`. S1 protects flash access in the running application, not the DFU bootloader.
 
 ## Testebenen
 
@@ -80,8 +79,8 @@ wird, woran man einen Fehler erkennt (z. B. Statusabfrage `<präfix>.status?`).
 
 ## Sicherheits-Checkliste für Hardware-Tests
 
-- Erste Tests mit reduzierter Leistung: `axis.maxtorque` klein (z. B. 3 Nm) und
-  `motor.config.current_lim` reduziert; erst nach erfolgreichem Test schrittweise erhöhen.
+- Choose reduced initial torque and current from the actual motor, board, supply and mechanics. There is no universal safe Nm/A
+  value for every build; increase only after the corresponding checks succeed.
 - Beim Armen und bei den ersten Sekunden mit neuem Feature: Hände weg vom Lenkrad,
   Lenkrad frei drehbar, nichts im Schwenkbereich.
 - Not-Aus (Netzteil- bzw. Relais-Abschaltung) in Reichweite. Der Software-Stopp des Plugins
@@ -92,4 +91,5 @@ wird, woran man einen Fehler erkennt (z. B. Statusabfrage `<präfix>.status?`).
 - Am angetriebenen Lenkrad bei aktivem Motor keine Flash-Befehle zum Testen senden (`sys.save`, `sys.eetest`,
   `sys.eedump`, `sys.eeformat`, `ss`, `se`), auch nicht zum Prüfen einer Sperre. Bei versagender Sperre wären es echte
   Flash-Zugriffe, Softwaregrenzen für Moment und Strom schützen dann nicht verlässlich.
-- Bei unerwartetem Verhalten: Schalter aus, Fehler notieren, im PR melden.
+- On unexpected behaviour, stop and remove drive power as needed, record the error and report it in the PR. If the function has a
+  comparison switch, return to its baseline only after the setup is inactive. Protection fixes have no old/unsafe mode to select.

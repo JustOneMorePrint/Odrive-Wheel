@@ -71,10 +71,11 @@ namespace OdriveWheel.SimHubPlugin
 
         private async void RefreshParameters(string tab, IReadOnlyList<ParameterDefinition> parameters)
         {
-            if (_refreshing || _applying || _closed) return;
+            if (_refreshing || _applying || _capturing || _closed) return;
 
             _refreshing = true;
             SetRefreshButtonsEnabled(false);
+            UpdateSnapshotButtons();
             var summary = _refreshSummaries[tab];
             summary.Text = "Reading " + parameters.Count + " values…";
             try
@@ -90,7 +91,11 @@ namespace OdriveWheel.SimHubPlugin
             finally
             {
                 _refreshing = false;
-                if (!_closed) SetRefreshButtonsEnabled(true);
+                if (!_closed)
+                {
+                    SetRefreshButtonsEnabled(true);
+                    UpdateSnapshotButtons();
+                }
             }
         }
 

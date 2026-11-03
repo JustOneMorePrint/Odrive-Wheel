@@ -23,6 +23,13 @@ das Testvorgehen in `docs/TESTING.md`.
   Plugin-Profile und werden beim Anwenden eines Profils nicht verändert.
 - Hardware tests are deferred at the user's request and stay listed as open in `docs/TESTING.md`.
 
+## Documentation scope
+
+Use the current contracts in `docs/ROADMAP.md`, `docs/FOUNDATIONS.md`, `docs/HARDWARE.md`, `docs/MEASUREMENT.md`,
+`docs/TESTING.md` and `docs/packages/PKG1.md` together with the production code. Distinguish planned behaviour from implemented behaviour.
+Legacy HTML-client guides, historical release notes, alternative integration notes and vendored documentation describe their original
+context; they do not establish this fork's current defaults, compatibility or validation. Explicit user instructions take precedence.
+
 ## Repo-Karte
 
 | Bereich | Pfad | Wichtig |

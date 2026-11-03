@@ -1,5 +1,9 @@
 # Referência de parâmetros — ferramenta de configuração Odrive-Wheel
 
+> **Legacy reference:** these are upstream HTML-client explanations, not this fork's SimHub specification. Example limits, automatic
+> writes and flash procedures are not approved defaults for an arbitrary board or motor. Use [Hardware](HARDWARE.md),
+> [Shared foundations](FOUNDATIONS.md), [Package 1](packages/PKG1.md) and [Testing](TESTING.md) for the current contract.
+
 Explicação mais detalhada de cada parâmetro e opção do `odrive-wheel.html`, na
 mesma ordem da barra lateral. O tooltip da ferramenta dá o resumo; aqui entra o
 porquê, a interação com os outros parâmetros e quando mexer.

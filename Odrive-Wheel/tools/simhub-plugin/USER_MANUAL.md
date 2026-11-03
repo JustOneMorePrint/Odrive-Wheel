@@ -7,8 +7,11 @@ and mappable actions for dashboards and button-box control.
 
 > **What is Odrive-Wheel?** An open direct-drive sim racing wheel firmware
 > that combines the ODrive motor controller with OpenFFBoard's Force
-> Feedback stack, running on the MKS XDrive Mini or ODESC V4.2 boards.
-> Repo: <https://github.com/eagabriel/Odrive-Wheel>
+> Feedback stack. This fork targets MKS XDrive Mini, MKS XDrive S and MKS XDrive;
+> only the Mini build currently exists, with hardware checks still open.
+> Repo: <https://github.com/JustOneMorePrint/Odrive-Wheel>
+> Support levels and upstream attribution: [repository README](../../../README.md)
+> and [hardware](../../../docs/HARDWARE.md).
 
 ---
 
@@ -61,10 +64,11 @@ and mappable actions for dashboards and button-box control.
 - **SimHub 9.x** installed at `C:\Program Files (x86)\SimHub` (or point
   the build to a custom install path)
 - **.NET Framework 4.8 runtime** (included with Windows 10 1903+ and Windows 11)
-- An **Odrive-Wheel board** running firmware **v1.3 or newer** —
-  identifiable in Windows Device Manager as HID `VID_1209&PID_0D40`.
-  Older firmware (v1.1/1.2) works too, but temperature and error
-  fields stay empty.
+- An appropriate **Odrive-Wheel firmware build for the board**; the HID device
+  identifies as `VID_1209&PID_0D40`. Telemetry depends on the fields actually
+  present in its HID reports. Precise serial reads and editor functions depend on
+  the firmware's `sys.capabilities?` declaration, not `sys.swver` or a release label.
+  See [hardware support](../../../docs/HARDWARE.md) before choosing a build.
 
 ---
 
@@ -73,8 +77,9 @@ and mappable actions for dashboards and button-box control.
 ### Option A — Prebuilt DLL
 
 1. Grab `OdriveWheel.SimHubPlugin.dll` from the
-   [Odrive-Wheel Releases page](https://github.com/eagabriel/Odrive-Wheel/releases).
-   (SimHub already ships `HidSharp.dll` — the plugin reuses it.)
+   [this fork's Releases page](https://github.com/JustOneMorePrint/Odrive-Wheel/releases),
+   when a release includes it. Otherwise build this fork from source. SimHub already
+   ships `HidSharp.dll`; the plugin reuses it.
 2. Close SimHub (right-click the tray icon → *Exit* to be sure).
 3. Copy the DLL into `C:\Program Files (x86)\SimHub`.
 4. Start SimHub. On first launch it detects the new DLL and asks
@@ -89,7 +94,7 @@ the reference assemblies otherwise.
 Close SimHub first, it locks the DLL.
 
 ```bash
-cd tools/simhub-plugin
+cd Odrive-Wheel/tools/simhub-plugin
 dotnet build -c Release
 ```
 
@@ -295,9 +300,10 @@ dropdown lists every file whose top level has
 
 - **▶ Apply selected profile** — writes every field of the profile to
   the board via serial. RAM-only.
-- **💾 Save to flash (sys.save! + ss)** — persists via `sys.save!`
-  (OpenFFBoard params to emulated EEPROM) and `ss` (ODrive config to
-  NVM). The board **reboots**; FFB drops for ~1–2 s. Confirmation dialog.
+- **💾 Save to flash (sys.save! + ss)** — requests the FFB save and, after its
+  `OK`, sends the ODrive save. The latter may reboot the board. A confirmation
+  dialog is shown; sending the commands is not proof of persistence. See
+  [Save to flash](#save-to-flash).
 - **↻** next to the dropdown re-scans the folder.
 
 ### AUTOMATIC PER-GAME
@@ -328,12 +334,13 @@ both keep working while values are being read: they end the read, and whatever
 it did not reach stays unread.
 
 Tabs: **Status**, **PSU / Brake**, **Axis**, **Motor**, **Encoder**,
-**Controller** and **Extensions**.
+**Controller**, **Snapshot** and **Extensions**.
 
 **The parameter lists only read.** They send read commands and change nothing
 on the board. The only way to write is the Power / Brake editor described below.
 Editing anything else, clearing errors, erasing the configuration, calibrations,
-the console and import/export are planned (Package 1b).
+the console and import are planned (Package 1b). Export is the
+[catalog snapshot](#catalog-snapshot) below.
 
 Implemented and tested against a simulated board. **Not tested on a real board
 yet.**
@@ -445,6 +452,91 @@ panel, which saves everything currently in RAM. `enable_brake_resistor` takes ef
 after a reboot, and enabling it without a connected brake resistor can break the power
 supply.
 
+### Catalog snapshot
+
+The **Snapshot** tab reads every value of the plugin's catalog once and keeps the
+result as it was, for export, comparison and a diagnostic report. Nothing is
+written to the board, and nothing is read without a button press.
+
+**What it is and is not.** A catalog snapshot: every value of the plugin's catalog,
+read one after the other from the **RAM** of the board. It is not a complete NVM
+image, not a calibration record and not a restore backup. The values were read at
+different moments between the start and the end time shown, and none of them says
+what is stored in flash. Not included: most FFB settings (only `axis.maxtorque` and
+`fx.master` are in the catalog yet), FFB filters, inputs and GPIO, profiles, the
+plugin settings, the anticogging map and `axis1`.
+
+1. Press **Capture snapshot**. The line next to it shows the progress, **Cancel**
+   ends it. The stop button and **Release port** keep working and end it too.
+2. The summary says how far it got and on which state:
+   - `Catalog snapshot complete`: every path has a usable reply.
+   - `ended with failed values`: it ran to the end, the failed paths are named.
+   - `PARTIAL`: a software stop, **Release port**, a lost or new connection, a new
+     firmware check or **Cancel** ended it, also when that came after the last
+     reply. The values before it are kept, the rest is not read, and nothing is
+     filled in from earlier reads.
+   With a finished software stop and its latch set, a capture still works: it only
+   reads. It never clears the latch, and what the latch blocks stays blocked.
+3. **Precision** is said per value. With **Firmware replies** at `declared complete
+   and exact` every ODrive reply is the value on the board. Without it, floats may be
+   rounded and numbers of 9 or more characters may be cut off. `axis.maxtorque` is never
+   exact: its OpenFFBoard command writes two decimals, the declaration does not cover it.
+   The summary names the values that are not exact, the metadata lists each with why.
+
+**Export snapshot…** writes two files next to each other and never replaces one:
+
+| File | Content |
+|---|---|
+| `odrive_config_<time>.json` | The settings as `"path": "value"`, exactly as the board replied, in the format of the web client's export. Status values are not in it. |
+| `odrive_config_<time>.meta.json` | What the values are: catalog version and scope, firmware build, the firmware's declaration, start and end time, port and connection, stop latch, failed and uncertain paths, completeness, status values. It carries the SHA-256 of the values file. |
+
+A partial snapshot gets `_partial` in both names. After writing, the plugin reads
+both files back and loads them like any other file. Only then it says **Exported
+and read back**, otherwise **Export FAILED** and nothing of it stays on disk. The
+web client's import loads the values file as one of its own exports.
+
+**Compare.** Choose a file with **Browse…**:
+
+- **Compare board with file** first captures a new snapshot, through the catalog
+  paths only. The keys of a file are data: they are shown, never sent.
+- **Compare the two files** works offline. It does not touch the connection, also
+  not with the port released.
+
+Settings and status values are listed apart: status values change on their own.
+
+| Result | Meaning |
+|---|---|
+| `same` | The same value by its type, and both sides are certain of it. With `declared complete and exact` on both sides `32.012` and `32.012001` are the same float32. |
+| `same text` | The same text, but one side's precision is not proven. Equal as text, nothing more. |
+| `DIFFERS` | A difference no rounding or cutting can explain. |
+| `unclear` | Different text that may still be the same value on the board. |
+| `only left`, `only right` | One side has no such path. |
+| `not compared` | A side tried to read it and failed. |
+
+Fixed rules: floats compare as float32, +0 and -0 are the same value, two NaN are
+the same, `inf` and `-inf` differ from each other and from every number. Integers
+and error bits compare as whole numbers of any length. Booleans take `0`, `1` and the
+`True`/`False` of older web client files. Without matching metadata, for example a
+file of the web client or a values file that was changed, a file's floats count as
+not proven. A file that is no JSON object, has a key twice, is not UTF-8 or is too
+large is refused with the reason.
+
+Writing, reading and comparing files run in the background: the stop button and
+**Release port** keep working meanwhile, and a result that comes after a newer attempt
+is not shown. A new comparison clears the earlier one, so a report never carries a
+comparison of an attempt before.
+
+**Write diagnostic report…** writes a short Markdown file for an issue: build,
+declaration, the scope of the snapshot, errors in clear text, axis state, bus voltage,
+temperatures with their limits, failed reads and the differences from the last
+compared file. It names no board type, since the firmware reports none (`hw_version`
+reads the same on all supported boards), and it never says that a temperature sensor
+is connected: without a sensor a plausible number can appear, and 0 is also what the
+firmware reports after an invalid reading.
+
+A finished snapshot stays as it is after a disconnect. The tab then says that its
+connection has ended, and it can still be exported.
+
 ---
 
 ## Property reference
@@ -481,16 +573,20 @@ expressions (e.g., `[OdriveWheel.SimHubPlugin.WheelPositionDeg]`).
 | `IBusCurrentA` | double | DC bus current |
 | `BrakeResistorCurrentA` | double | Regen current through the brake resistor |
 
-### Temperatures (from HID, firmware ≥ 1.2)
+### Temperatures (when present in the HID report)
 
 | Property | Type | Description |
 |---|---|---|
-| `FetTempC` | double | FET/inverter °C (NaN if no sensor) |
-| `MotorTempC` | double | Motor °C (NaN if no sensor) |
-| `FetTempValid` | bool | true iff FET thermistor present |
-| `MotorTempValid` | bool | true iff motor thermistor present |
+| `FetTempC` | double | Reported FET/inverter °C; NaN for an absent field or invalid sentinel |
+| `MotorTempC` | double | Reported motor °C; NaN for an absent field or invalid sentinel |
+| `FetTempValid` | bool | HID field is available and not `-128`; no proof of sensor presence |
+| `MotorTempValid` | bool | HID field is available and not `-128`; no proof of sensor presence |
 
-### ODrive state & errors (from HID, firmware ≥ 1.3)
+A missing or disabled sensor can still produce a plausible number. These flags
+describe the HID field, not a verified physical sensor. See
+[temperature limitations](../../../docs/HARDWARE.md#temperature-sensors).
+
+### ODrive state & errors (when present in the HID report)
 
 | Property | Type | Description |
 |---|---|---|
@@ -664,10 +760,11 @@ inc/dec triggers.
 
 The **💾 Save to flash** button runs two commands in sequence:
 
-1. `sys.save!` — persists FFB parameters (all `axis.*`, `fx.*`) into
-   the OpenFFBoard's emulated EEPROM. Non-destructive.
-2. `ss` — persists ODrive config (`config.*`, `axis0.motor.*`,
-   `axis0.encoder.*`) into flash NVM and **reboots the board**.
+1. `sys.save!` — requests saving the supported FFB settings into the
+   OpenFFBoard emulated EEPROM in S1+S2. Some effect and filter writes do not
+   report their failures, so `OK` does not prove that every setting was stored.
+2. `ss` — requests saving the ODrive configuration into NVM in S10+S11.
+   If accepted, it **reboots the board even when storing the configuration failed**.
    Sent only after `sys.save!` has answered `OK`. On an error, a timeout,
    a lost connection or a software stop the plugin shows the error and
    sends no `ss`, without retrying.
@@ -675,16 +772,19 @@ The **💾 Save to flash** button runs two commands in sequence:
 FFB drops for ~1–2 seconds during the reboot. Don't do this mid-race.
 A confirmation dialog protects against accidental clicks.
 
-If you only edited FFB/EQ parameters (not motor calibration), the
-reboot is technically unnecessary — but the plugin runs both for
-simplicity and matches what the HTML tool's unified Save button does.
+The panel requests both stores even if only FFB settings changed. They are
+separate stores: success reported for one says nothing about the other.
 
-**Known limit:** `ss` has no reply, and the firmware ignores it while the motor
-is armed. The status line can therefore only say that `ss` was sent, not that
-the ODrive config was saved; a reboot of the board is the only sign that it
-took effect. The ODrive editor (planned, Package 1b) will handle this properly;
-until then set the axis to IDLE first if you changed ODrive values. After a
-[software stop](#software-stop), `ss` is refused until you press **Clear stop**.
+**Known limits:** `ss` has no reply and is ignored while a motor is armed.
+The status line can say it was sent, not that the configuration was saved.
+Neither `sys.save!` returning `OK` nor a reboot confirms persistence: only
+reading back the intended values after a reboot can do that. The current panel
+does not perform that persistence verification. See
+[save states](../../../docs/FOUNDATIONS.md#states-of-a-value).
+
+Use the save workflow only with the axes inactive. After a
+[software stop](#software-stop), `ss` remains blocked until **Clear stop**;
+clearing that latch is a deliberate user action, never an automatic save step.
 
 ---
 
@@ -731,8 +831,8 @@ if you're not sure a file was found.
   `VID_1209 PID_0D40`. Unplug/replug. If Windows still shows it as
   "Unknown device", replug into a different USB port (some hubs are
   flaky for HID devices).
-- Older firmware without the extended report (< v1.2). Basic telemetry
-  still works.
+- A firmware report without some extended fields leaves those values
+  unavailable; a software version label alone does not prove field support.
 - Another app has the device in exclusive mode (rare — DirectInput
   games don't exclusive-lock the FFB device).
 
@@ -794,9 +894,9 @@ reply channel is stuck.
 
 ### Live readings show but AxisError never has a value
 
-- The board is on firmware v1.2 or older, which doesn't include the
-  error fields in the HID report. Errors default to 0 / `AnyError=false`.
-  Everything else works.
+- The firmware report may omit error fields. In that case the older telemetry
+  properties default to 0 / `AnyError=false`; those defaults do not prove that
+  the board has no error. Use the serial status tab when available.
 
 ---
 
@@ -849,6 +949,6 @@ button-mapped inc/dec, per-game profile switching.
 
 ## License
 
-MIT. Part of the [Odrive-Wheel](https://github.com/eagabriel/Odrive-Wheel)
-project. Firmware, HTML configurator, and this plugin share the same
-license.
+The plugin retains its existing MIT notice. This does not assign the same
+license to the firmware or bundled components. See the
+[repository README](../../../README.md) for codebase attribution and licensing.

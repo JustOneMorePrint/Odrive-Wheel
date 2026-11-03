@@ -1,5 +1,9 @@
 # Tutorial — Ajustando o feeling do volante
 
+> **Legacy reference:** this tutorial describes the upstream HTML tools, not the current SimHub interface. Its examples and performance
+> claims are not validated defaults for this fork. Use [Hardware](HARDWARE.md), [Measurement](MEASUREMENT.md),
+> [Testing](TESTING.md) and the [roadmap](ROADMAP.md) for the current contract. Hardware tests remain deferred.
+
 <sub>🇬🇧 [Read in English](TUNING_FEELING.md)</sub>
 
 Guia prático pra tunar o "feel" do volante usando as ferramentas integradas — do Performance Test, passando pelos filtros do motor (CF/Damper/Friction/Inertia) e terminando nos efeitos FFB que o jogo manda (Constant Force, Spring, Damper, Friction).

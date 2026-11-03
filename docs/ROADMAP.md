@@ -41,7 +41,7 @@ upstream, Simucube, Fanatec, Moza and the literature. Benefits named there are n
 | Stage | The user wants to | Contains | State |
 |---|---|---|---|
 | 0 Foundations | Connect, stop, trust what is shown | Step 0, 1a, S1, complete ASCII replies, capability check, Power / Brake to RAM | In `main`, not checked on the board |
-| 1 First backup | Have a copy before changing anything | Read-only snapshot, comparison with a file, compact diagnostic report | **Next** |
+| 1 First backup | Have a copy before changing anything | Read-only snapshot, comparison with a file, compact diagnostic report | Catalog snapshot done, not checked on the board. FFB values follow with their catalog entries |
 | 2 Setup | Bring a board and a motor into operation | Board identity and flasher, editor with clear value states, save, power data, wizard, calibration, sensors, protection | Planned |
 | 3 Backup and restore | Go back reliably | Restore with a review, calibration records, firmware rollback | Planned |
 | 4 FFB operation | Set up and use the wheel | FFB tabs, inputs, torque processing, signal chain | Planned |
@@ -67,11 +67,13 @@ Nothing was dropped. "Setting" means a value the function needs from the user's 
 
 No write of any kind to the board.
 
-| Function | Package | Switch |
-|---|---|---|
-| Export of all readable ODrive and FFB values, in the web client's JSON format, with build, board and capability state | 1b | None |
-| Comparison of the board against a file, and of two files | 1b, new | None |
-| Compact diagnostic report: build, board, capabilities, errors in clear text, temperatures, what differs from the last backup | 2, brought forward | None |
+| Function | Package | State | Switch |
+|---|---|---|---|
+| Export of all readable ODrive and FFB values, in the web client's JSON format, with build, board and capability state | 1b | Done for the catalog: its ODrive values, `sys.vbusdiv`, `axis.maxtorque`, `fx.master`. The other FFB values follow with their catalog entries (1c). No board in it, as the firmware reports none yet | None |
+| Comparison of the board against a file, and of two files | 1b, new | Done | None |
+| Compact diagnostic report: build, board, capabilities, errors in clear text, temperatures, what differs from the last backup | 2, brought forward | Done, without a board type for the same reason | None |
+
+Hardware tests of these are open (`docs/TESTING.md`). The details are in `docs/packages/PKG1.md`, „Catalog snapshot“.
 
 ### Stage 2: Setup
 
@@ -296,7 +298,7 @@ newlib-nano weder `%llu` noch `%lld` kennt.
 
 The firmware declares this through `sys.capabilities?`, and the plugin only stops doubting a reply with that declaration
 on the same connection. Without it, a number of 9 or more characters stays marked as possibly cut. The contract is in
-`docs/packages/PKG1.md`, „Firmware capabilities“. Export/import follows later.
+`docs/packages/PKG1.md`, „Firmware capabilities“. The export of the catalog snapshot records the declaration, import follows later.
 
 **Nachweisstand:** `tests/host/test_ascii_read.cpp` führt die echten Formatierer, den echten Antwortweg und den echten
 Sende-Puffer auf dem PC aus. Die Arbeit von `printf` macht dort die C-Bibliothek des PCs. Am Board ungeprüft ist deshalb,
@@ -308,7 +310,6 @@ ob `%.9g` in newlib-nano dieselben Texte liefert und ob die Werte dort wirklich 
   version gives telemetry at about 10 Hz, a license 60 Hz. Direct game readers in the plugin would be faster.
 - **Left over:** `fx.master` is stored at `0x04F0`, but the address is missing from `VirtAddVarTab`, so it is lost at a page transfer. A small PR
   of its own, after asking.
-- **Left over:** `docs/TORQUE_CONTROL.md` gives current bandwidths in Hz, the parameter is rad/s.
 - **Left over:** `sys.temp?` and `sys.motortemp?` answer `0.0` for NaN, the same as a real 0 °C.
 - **Left over:** the comment in `Odrive-Wheel/Makefile` says "OVP trip = 59.92V". The trip level defaults to 30 V, 59.92 V is the default of the ramp.
 - **Left over:** `EffectsCalculator::saveFlash()` ignores its `Flash_Write` results. `sys.save!` and `sys.savestat?` therefore do not report all

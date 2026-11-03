@@ -1,10 +1,10 @@
 # Building Odrive-Wheel from source
 
-For most users the pre-built `.hex` from a
-[GitHub release](https://github.com/eagabriel/Odrive-Wheel/releases) plus the
-in-browser DFU flasher is enough. This document is for when you want to
-modify the firmware, keep a private fork in sync with upstream OpenFFBoard,
-or investigate a build issue.
+Build this fork from source, or download `odrive-wheel.bin` from a successful
+[Build Firmware run](https://github.com/JustOneMorePrint/Odrive-Wheel/actions/workflows/build.yml)
+for the revision you intend to use. Upstream releases are not builds of this fork.
+The SimHub plugin's protected DFU updater is planned; manual flashing and its
+preservation limits are described below and in [Getting started](GETTING_STARTED.md).
 
 ## Repository structure
 
@@ -13,8 +13,8 @@ or investigate a build issue.
 ├── Odrive-Wheel/               ← Main project (CDC + HID composite + FFB)
 │   ├── src/                    ← Local sources (USB, FFB bridge, cmd_table, EQ)
 │   ├── inc/                    ← Local headers
-│   ├── linker/                 ← Custom linker script (S0/S3-9 app, S10-11 EEPROM)
-│   ├── tools/                  ← HTML config tool (Web Serial + WebUSB DFU, PT/EN i18n)
+│   ├── linker/                 ← S0/S3-9 app, S1-2 FFB EEPROM, S10-11 ODrive NVM; S9 reserved for slots
+│   ├── tools/                  ← SimHub plugin and the legacy HTML reference tool
 │   └── Makefile                ← Build via arm-none-eabi-gcc
 ├── ODrive-fw-v0.5.6/           ← ODrive firmware (with minimal patches)
 ├── OpenFFBoard-master/         ← Submodule → upstream Ultrawipf/OpenFFBoard
@@ -28,7 +28,7 @@ upstream [`Ultrawipf/OpenFFBoard`](https://github.com/Ultrawipf/OpenFFBoard)
 (currently locked at **v1.17.0**). Clone with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/eagabriel/Odrive-Wheel.git
+git clone --recurse-submodules https://github.com/JustOneMorePrint/Odrive-Wheel.git
 ```
 
 If you already cloned without `--recurse-submodules`:
@@ -44,7 +44,7 @@ Prerequisites:
 - `arm-none-eabi-gcc` (tested with 12.2)
 - `make`
 - `python3` with `pyyaml`, `jinja2`, `jsonschema` (for autogen)
-- `dfu-util` (only for the first flash — later updates use the in-browser flasher)
+- `dfu-util` for manual flashing; the plugin's protected updater is not implemented yet
 
 ### Option A — GitHub Actions (zero local setup)
 
@@ -135,7 +135,8 @@ Several FFB stack files (HidFFB, EffectsCalculator) were **forked and modified**
 locally in `Odrive-Wheel/src/` and `inc/`. The originals live in the
 `OpenFFBoard-master/` submodule.
 
-When upstream releases relevant updates, workflow:
+The submodule is read-only for normal feature tasks (`CLAUDE.md`, rule 11). The following is a maintainer procedure
+for a separately scoped upstream update, not permission to change the submodule during ordinary work:
 
 ```bash
 # 1. Pull latest upstream commit into the submodule
@@ -171,9 +172,10 @@ Forked files carry a header at the top indicating:
 Example: `Odrive-Wheel/src/HidFFB.cpp` documents the `set_effect` modification
 for single-axis fallback.
 
-## Flash from source
+## Manual flashing
 
-Once built, put the board into DFU mode (BOOT0 + RESET) and:
+For a blank, matching board, a manual whole-image flash is available. This is not the protected updater of package 1e.
+Check the hardware target and [backup requirements](TESTING.md#vor-jedem-flashen) first. Enter the board's DFU mode:
 
 ```bash
 cd Odrive-Wheel
@@ -186,5 +188,9 @@ Equivalent to:
 dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D build/odrive-wheel.bin
 ```
 
-Use the same command for later updates. A DFU flasher in the SimHub plugin is
-planned ([Package 1e](packages/PKG1.md)) and not available yet.
+These commands can erase existing settings. FFB EEPROM is in S1+S2, ODrive NVM in S10+S11; S9 is reserved for
+the planned slot store. A contiguous `.bin` can cover protected areas with `0xFF`, which does not make a raw whole-image
+flash preserve them. The historical HTML flasher is not the approved protected-update path.
+
+The future SimHub DFU flasher must enforce the [package 1e sector rules](packages/PKG1.md#details-zu-1e) itself.
+The running firmware's S1 flash guard provides no protection while the DFU bootloader is running.

@@ -14,14 +14,17 @@ namespace OdriveWheel.SimHubPlugin
         public const string CommandPath = "sys.capabilities";
         private const string SchemaVersion = "1";
 
-        internal FirmwareCapabilities(int connectGeneration, bool asciiFull, bool float32RoundTrip)
+        internal FirmwareCapabilities(int connectGeneration, bool asciiFull, bool float32RoundTrip, string declaration = null)
         {
             ConnectGeneration = connectGeneration;
             AsciiFull         = asciiFull;
             Float32RoundTrip  = float32RoundTrip;
+            Declaration       = declaration;
         }
 
         public int  ConnectGeneration { get; }
+        /// <summary>The value of the reply as the firmware sent it, the evidence a record can carry.</summary>
+        public string Declaration { get; }
         /// <summary>An ODrive read holds the whole number or an error, it is never cut.</summary>
         public bool AsciiFull         { get; }
         /// <summary>A float in an ODrive read parses back to the same float32.</summary>
@@ -72,7 +75,7 @@ namespace OdriveWheel.SimHubPlugin
             if (asciiFull == null) return Refuse("no ascii_full", out problem);
             if (float32RoundTrip == null) return Refuse("no float32_rt", out problem);
 
-            capabilities = new FirmwareCapabilities(connectGeneration, asciiFull == "1", float32RoundTrip == "1");
+            capabilities = new FirmwareCapabilities(connectGeneration, asciiFull == "1", float32RoundTrip == "1", reply);
             return true;
         }
 

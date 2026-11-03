@@ -83,14 +83,33 @@ namespace OdriveWheel.SimHubPlugin
             ConnectGeneration = connectGeneration;
         }
 
+        private SerialOperationContext(int connectGeneration, StopTicket lastStop, bool stopLatched)
+        {
+            ConnectGeneration = connectGeneration;
+            LastStop          = lastStop;
+            StopLatched       = stopLatched;
+            BindsStop         = true;
+            ReadsOnly         = true;
+        }
+
         /// <summary>Only the connection counts, for a harmless read that also has to work while the stop
         /// latch is set. A running stop still ends it, and whatever the latch blocks stays blocked.</summary>
         public static SerialOperationContext ForConnection(int connectGeneration)
             => new SerialOperationContext(connectGeneration);
 
+        /// <summary>Reads bound to one connection and one stop state, which may be a finished stop with the latch
+        /// set. A new stop, or the latch changing either way, ends them. Nothing but reads known to change nothing goes out
+        /// with it (<see cref="OdriveProtocol.IsHarmlessRead"/>), so the latch it tolerates opens no write and no flash access.</summary>
+        public static SerialOperationContext ForReading(int connectGeneration, StopTicket lastStop, bool stopLatched)
+            => new SerialOperationContext(connectGeneration, lastStop, stopLatched);
+
         public int        ConnectGeneration { get; }
         public StopTicket LastStop          { get; }
         public bool       BindsStop         { get; }
+        /// <summary>The state of the latch the operation was prepared with. Only reads may expect it set.</summary>
+        public bool       StopLatched       { get; }
+        /// <summary>The worker refuses any line that is not a harmless read.</summary>
+        public bool       ReadsOnly         { get; }
     }
 
     public sealed class SerialRequest
